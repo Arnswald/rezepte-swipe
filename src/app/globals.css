@@ -1,0 +1,114 @@
+@import "tailwindcss";
+
+/* ── Design Tokens: warmes "Swipe for Dinner"-Theme ───────────
+ * Creme + Terrakotta + Waldgrün. Für die ganze App der Standard
+ * (im Dashboard war das nur die scoped .rezepte-warm-Klasse). */
+:root {
+  /* Surfaces */
+  --bg: #f4eee3;
+  --surface: #ffffff;
+  --surface-elevated: #f7f1e7;
+  --surface-hover: #efe7d9;
+
+  /* Borders */
+  --border: #e7dece;
+  --border-subtle: #f0e8da;
+
+  /* Text */
+  --text-primary: #2b2419;
+  --text-secondary: #6d6151;
+  --text-muted: #a89a86;
+
+  /* Accent — Terrakotta (CTA, aktiver Filter) */
+  --accent: #bd5138;
+  --accent-hover: #a8442e;
+  --accent-subtle: #f6e7df;
+  --accent-text: #a8442e;
+
+  /* Semantic */
+  --success: #3f6b43;
+  --warning: #d99a2b;
+  --danger: #bd5138;
+
+  /* Radius */
+  --radius: 14px;
+  --radius-lg: 20px;
+
+  color-scheme: light;
+}
+
+.dark {
+  --bg: #1b1712;
+  --surface: #241e18;
+  --surface-elevated: #2e2620;
+  --surface-hover: #362d25;
+  --border: #3b3026;
+  --border-subtle: #2b231c;
+  --text-primary: #f1e8dc;
+  --text-secondary: #b7a894;
+  --text-muted: #7e6e5f;
+  --accent: #d5603f;
+  --accent-hover: #e07a58;
+  --accent-subtle: #2b1e17;
+  --accent-text: #e5825f;
+  --success: #8bbf90;
+  --warning: #e6b45a;
+  --danger: #d5603f;
+
+  color-scheme: dark;
+}
+
+/* ── Tailwind Theme Mapping ──────────────────────────────────
+ * Macht Utilities wie bg-surface / text-text-primary / border-border nutzbar. */
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-elevated: var(--surface-elevated);
+  --color-surface-hover: var(--surface-hover);
+  --color-border: var(--border);
+  --color-border-subtle: var(--border-subtle);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-subtle: var(--accent-subtle);
+  --color-accent-text: var(--accent-text);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-danger: var(--danger);
+  --font-sans: var(--font-geist-sans);
+  --font-heading: var(--font-outfit);
+}
+
+/* ── Base ────────────────────────────────────────────────────── */
+html, body {
+  height: 100%;
+}
+body {
+  background: var(--bg);
+  color: var(--text-primary);
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  /* iOS: kein Gummiband-Overscroll der ganzen Seite (App-Feeling) */
+  overscroll-behavior-y: none;
+}
+h1, h2, h3 {
+  font-family: var(--font-outfit), var(--font-geist-sans), system-ui, sans-serif;
+}
+
+/* Utility: Scrollbar ausblenden (Bilder-Galerie, Filter-Reihe) */
+.scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* Safe-Area unten (iPhone Home-Indikator) */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .pb-safe { padding-bottom: calc(env(safe-area-inset-bottom) + 0.5rem); }
+}
+.pb-safe { padding-bottom: 0.5rem; }

@@ -1,0 +1,35 @@
+# ──────────────────────────────────────────────────────────────
+# Referenz-Compose für die öffentliche Rezepte-Swipe-App.
+#
+# Läuft neben dem Fokus Dashboard auf demselben Umbrel. Der produktive
+# Stack wird in Portainer angelegt (Volumes/Secrets dort). Diese Datei
+# dokumentiert den korrekten Aufbau.
+#
+# SICHERHEIT / PRIVATSPHÄRE — der zentrale Unterschied zum Dashboard:
+# Diese App ist ÖFFENTLICH erreichbar. Sie bekommt deshalb NUR den
+# Rezept-Ordner read-only gemountet — NICHT den ganzen Vault.
+# Journal, Personen, CRM etc. bleiben für die öffentliche App unsichtbar.
+# ──────────────────────────────────────────────────────────────
+
+services:
+  rezepte-swipe:
+    image: ghcr.io/arnswald/rezepte-swipe:latest
+    container_name: rezepte-swipe
+    restart: unless-stopped
+    ports:
+      - "3100:3000"
+    volumes:
+      # Schreibbar: Bild-Cache (WebP) + eingegangene Vorschläge
+      - rezepte-data:/app/data
+      # NUR der Rezept-Ordner, READ-ONLY. Der Rest des Vaults ist tabu.
+      - "/syncthing-data/Obsidian/06 Research/Gerichte:/app/recipes:ro"
+    environment:
+      - TZ=Europe/Berlin
+      - DATA_DIR=/app/data
+      - OBSIDIAN_RECIPES_PATH=/app/recipes
+      - OBSIDIAN_IMAGES_PATH=/app/recipes/Bilder
+      # Optional (Phase 2): Vorschläge zusätzlich an n8n → Telegram/Obsidian
+      - N8N_SUGGEST_WEBHOOK=${N8N_SUGGEST_WEBHOOK:-}
+
+volumes:
+  rezepte-data:

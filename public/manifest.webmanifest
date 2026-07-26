@@ -1,0 +1,16 @@
+{
+  "name": "Rezepte — swipe dich satt",
+  "short_name": "Rezepte",
+  "description": "Wisch dich durch Christians Lieblingsrezepte.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f4eee3",
+  "theme_color": "#bd5138",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

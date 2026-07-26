@@ -1,0 +1,999 @@
+"use client";
+
+import { useState, useEffect, useMemo, useCallback } from "react";
+import { motion, AnimatePresence, useReducedMotion, useMotionValue, useTransform, animate } from "framer-motion";
+import {
+  Loader2, ChevronRight, Clock, Users, Flame,
+  LayoutGrid, Layers, X, ExternalLink, AlertCircle, Check,
+  Heart, Star, RotateCcw,
+} from "lucide-react";
+
+// Instagram-Glyph (aus lucide entfernt) als inline-SVG
+function InstagramIcon({ className }: { className?: string }) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
+      <rect x="2" y="2" width="20" height="20" rx="5" ry="5" />
+      <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z" />
+      <line x1="17.5" y1="6.5" x2="17.51" y2="6.5" />
+    </svg>
+  );
+}
+import { NumberFlow } from "@/components/ui/NumberFlow";
+import { Lens } from "@/components/ui/Lens";
+import { AnimatedInput } from "@/components/ui/AnimatedInput";
+import { useToast } from "@/components/ui/Toast";
+
+// ── Types ─────────────────────────────────────────────────────
+
+interface IngredientGroup { group: string; items: string[] }
+
+interface Recipe {
+  slug: string;
+  name: string;
+  description: string;
+  category: string;
+  kcal: number | null;
+  protein: number | null;
+  carbs: number | null;
+  fat: number | null;
+  image: string | null;
+  imageExists: boolean;
+  images: string[];
+  created: string;
+  source: string | null;
+  totalTime: string | null;
+  portions: string | null;
+  difficulty: string | null;
+  ingredients: IngredientGroup[];
+  steps: string[];
+  tips: string[];
+}
+
+// Swipe-Verdikt (Tinder-Logik) — lokal persistiert bis der öffentliche Login kommt
+type Verdict = "like" | "nope" | "super";
+
+const FAV_KEY = "rezepte-verdicts-v1";
+
+function loadVerdicts(): Record<string, Verdict> {
+  if (typeof window === "undefined") return {};
+  try { return JSON.parse(localStorage.getItem(FAV_KEY) || "{}"); } catch { return {}; }
+}
+function saveVerdict(slug: string, v: Verdict | null) {
+  try {
+    const all = loadVerdicts();
+    if (v === null) delete all[slug]; else all[slug] = v;
+    localStorage.setItem(FAV_KEY, JSON.stringify(all));
+  } catch { /* ignore */ }
+}
+
+interface Diagnostics {
+  vaultPath: string | null;
+  recipesDir: string | null;
+  recipesDirExists: boolean;
+  imagesDir: string | null;
+  imagesDirExists: boolean;
+  recipeCount: number;
+}
+
+// ── Helpers ───────────────────────────────────────────────────
+
+const CATEGORY_EMOJI: Record<string, string> = {
+  "Frühstück": "🍳",
+  "Hauptgericht": "🍽️",
+  "Dessert": "🍰",
+  "Snack": "🥨",
+  "Salat": "🥗",
+};
+
+function imageUrl(image: string | null, w: 400 | 800 | 1200): string | null {
+  if (!image) return null;
+  return `/api/recipes/image/${encodeURIComponent(image)}?w=${w}`;
+}
+
+// ── Makro-Chips ───────────────────────────────────────────────
+
+function MacroChips({ r, size = "md", animate = false }: { r: Recipe; size?: "sm" | "md"; animate?: boolean }) {
+  const chips = [
+    { key: "kcal", label: "kcal", value: r.kcal, suffix: "", color: "text-orange-500 bg-orange-500/10" },
+    { key: "P", label: "P", value: r.protein, suffix: "g", color: "text-emerald-600 bg-emerald-500/10" },
+    { key: "K", label: "K", value: r.carbs, suffix: "g", color: "text-blue-500 bg-blue-500/10" },
+    { key: "F", label: "F", value: r.fat, suffix: "g", color: "text-amber-600 bg-amber-500/10" },
+  ].filter((c): c is typeof c & { value: number } => c.value != null);
+
+  const pad = size === "sm" ? "px-1.5 py-0.5 text-[10px]" : "px-2 py-1 text-xs";
+
+  return (
+    <div className="flex items-center gap-1.5 flex-wrap">
+      {chips.map((c) => (
+        <span key={c.key} className={`${pad} rounded-md font-semibold ${c.color}`}>
+          {animate
+            ? <NumberFlow value={c.value} format={(n) => `${n}${c.suffix}`} />
+            : `${c.value}${c.suffix}`}
+          {" "}
+          <span className="opacity-60 font-normal">{c.label}</span>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// ── Bild mit Fallback ─────────────────────────────────────────
+
+function RecipeImage({ r, w, className }: { r: Recipe; w: 400 | 800 | 1200; className?: string }) {
+  const [failed, setFailed] = useState(false);
+  const url = r.imageExists ? imageUrl(r.image, w) : null;
+
+  if (!url || failed) {
+    return (
+      <div className={`flex items-center justify-center bg-surface-elevated ${className}`}>
+        <span className="text-5xl opacity-40">{CATEGORY_EMOJI[r.category] ?? "🍽️"}</span>
+      </div>
+    );
+  }
+  return (
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      src={url}
+      alt={r.name}
+      loading="lazy"
+      onError={() => setFailed(true)}
+      className={className}
+    />
+  );
+}
+
+// ── Karten-Inhalt (wird pro Stapel-Karte gerendert) ───────────
+
+// Grüne Info-Pill im Swipe-for-Dinner-Stil
+function InfoPill({ icon: Icon, children }: { icon?: React.ComponentType<{ className?: string }>; children: React.ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium bg-[#3f6b43]/10 text-[#3f6b43] dark:bg-[#8bbf90]/15 dark:text-[#9ecaa1] border border-[#3f6b43]/15">
+      {Icon && <Icon className="w-3 h-3" />}
+      {children}
+    </span>
+  );
+}
+
+function RecipeCardFace({
+  r, index, total, onOpen,
+}: {
+  r: Recipe; index: number; total: number; onOpen: () => void; animateMacros?: boolean;
+}) {
+  return (
+    <div className="bg-surface rounded-[26px] shadow-[0_10px_30px_rgba(70,50,30,0.10)] border border-border p-3 sm:p-3.5 h-full flex flex-col">
+      {/* Kopfzeile: Kategorie-Label + Rezept-Pill */}
+      <div className="flex items-center justify-between px-1 pb-2 shrink-0">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-text-muted">
+          — {r.category}
+        </span>
+        <span className="text-[11px] font-medium tabular-nums text-text-muted">{index + 1} / {total}</span>
+      </div>
+
+      {/* Foto füllt den verfügbaren Platz (Tinder-Prinzip) */}
+      <button
+        onClick={onOpen}
+        aria-label={`${r.name} öffnen`}
+        className="relative block w-full flex-1 min-h-0 rounded-2xl overflow-hidden bg-surface-elevated"
+      >
+        <RecipeImage r={r} w={800} className="absolute inset-0 w-full h-full object-cover pointer-events-none" />
+        <span className="absolute bottom-2 right-2 px-2 py-1 rounded-full bg-black/45 backdrop-blur-sm text-white text-[10px] font-semibold flex items-center gap-0.5 pointer-events-none">
+          Rezept <ChevronRight className="w-3 h-3" />
+        </span>
+      </button>
+
+      {/* Text unter dem Foto — kompakt, feste Höhe */}
+      <div className="px-1 pt-2.5 shrink-0">
+        <h2 className="text-[1.25rem] sm:text-[1.35rem] leading-[1.12] font-extrabold text-text-primary tracking-tight line-clamp-2">{r.name}</h2>
+        <p className="text-[13px] text-text-secondary leading-snug mt-1 line-clamp-2">{r.description}</p>
+
+        {/* Info-Pills */}
+        <div className="flex flex-wrap items-center gap-1.5 mt-2.5">
+          {r.totalTime && <InfoPill icon={Clock}>{r.totalTime}</InfoPill>}
+          {r.difficulty && <InfoPill icon={Flame}>{r.difficulty}</InfoPill>}
+          {r.kcal != null && <InfoPill>{r.kcal} kcal</InfoPill>}
+          {r.protein != null && <InfoPill>{r.protein}g Protein</InfoPill>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Swipe-Deck mit Verdicts (Tinder-Logik) ────────────────────
+// Rechts = Lecker, links = Nö, hoch = Superlike. Farbige Stamps beim Wischen,
+// gestapelte Karten dahinter. Verdicts landen (vorerst) in localStorage.
+
+function SwipeDeck({
+  recipes, index, setIndex, onOpen, onVerdict, onUndo, canUndo,
+}: {
+  recipes: Recipe[];
+  index: number;
+  setIndex: (i: number) => void;
+  onOpen: (r: Recipe) => void;
+  onVerdict: (r: Recipe, v: Verdict) => void;
+  onUndo: () => void;
+  canUndo: boolean;
+}) {
+  const prefersReduced = useReducedMotion();
+  const x = useMotionValue(0);
+  const y = useMotionValue(0);
+  const rotate = useTransform(x, [-240, 240], [-14, 14]);
+  const likeOp = useTransform(x, [30, 120], [0, 1]);
+  const nopeOp = useTransform(x, [-120, -30], [1, 0]);
+  const superOp = useTransform(y, [-120, -30], [1, 0]);
+
+  const current = recipes[index];
+
+  const commit = useCallback((v: Verdict) => {
+    if (!current) return;
+    const tx = v === "like" ? 560 : v === "nope" ? -560 : 0;
+    const ty = v === "super" ? -720 : 60;
+    const finish = () => {
+      onVerdict(current, v);
+      x.set(0); y.set(0);
+      setIndex(index + 1);
+    };
+    if (prefersReduced) { finish(); return; }
+    animate(x, tx, { duration: 0.32, ease: [0.35, 0.6, 0.3, 1] });
+    animate(y, ty, { duration: 0.32, ease: [0.35, 0.6, 0.3, 1], onComplete: finish });
+  }, [current, index, onVerdict, setIndex, prefersReduced, x, y]);
+
+  const springBack = useCallback(() => {
+    animate(x, 0, { type: "spring", stiffness: 400, damping: 32 });
+    animate(y, 0, { type: "spring", stiffness: 400, damping: 32 });
+  }, [x, y]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "ArrowLeft") commit("nope");
+      if (e.key === "ArrowRight") commit("like");
+      if (e.key === "ArrowUp") commit("super");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [commit]);
+
+  if (!current) return null;
+
+  const back = [1, 2].map((offset) => recipes[index + offset]).filter(Boolean) as Recipe[];
+
+  return (
+    <div className="flex flex-col h-full min-h-0">
+      <div className="relative flex-1 min-h-0" style={{ touchAction: "pan-y" }}>
+        {/* Hintere Karten */}
+        {back.reverse().map((recipe, i) => {
+          const offset = back.length - i; // 2 dann 1
+          return (
+            <motion.div
+              key={recipe.slug}
+              className="absolute inset-0"
+              initial={false}
+              animate={{ scale: 1 - offset * 0.05, y: offset * 12, opacity: 1 - offset * 0.12 }}
+              transition={prefersReduced ? { duration: 0 } : { type: "spring", stiffness: 300, damping: 30 }}
+              style={{ zIndex: 10 - offset, transformOrigin: "top center" }}
+            >
+              {/* schlichte Tiefe-Karte im gleichen weißen Look */}
+              <div className="bg-surface rounded-[26px] shadow-[0_10px_30px_rgba(70,50,30,0.10)] border border-border p-3 h-full flex flex-col">
+                <div className="h-4 shrink-0" />
+                <div className="relative w-full flex-1 min-h-0 rounded-2xl overflow-hidden bg-surface-elevated">
+                  <RecipeImage r={recipe} w={400} className="absolute inset-0 w-full h-full object-cover" />
+                  <div className="absolute inset-0 bg-black/5" />
+                </div>
+                <div className="h-24 shrink-0" />
+              </div>
+            </motion.div>
+          );
+        })}
+
+        {/* Vorderste Karte — beide Achsen draggable */}
+        <motion.div
+          key={current.slug}
+          className="relative w-full h-full select-none"
+          style={{ x, y, rotate, zIndex: 20, transformOrigin: "top center" }}
+          drag={prefersReduced ? false : true}
+          dragConstraints={{ left: 0, right: 0, top: 0, bottom: 0 }}
+          dragElastic={0.55}
+          whileDrag={{ cursor: "grabbing" }}
+          onDragEnd={(_, info) => {
+            const up = info.offset.y < -110 && Math.abs(info.offset.y) > Math.abs(info.offset.x);
+            if (up || info.velocity.y < -700) { commit("super"); return; }
+            if (info.offset.x > 100 || info.velocity.x > 500) { commit("like"); return; }
+            if (info.offset.x < -100 || info.velocity.x < -500) { commit("nope"); return; }
+            springBack();
+          }}
+        >
+          {/* Verdict-Stamps */}
+          <motion.div style={{ opacity: likeOp }} className="absolute top-8 right-6 z-30 rotate-[14deg] px-3 py-1 rounded-xl border-[3px] border-[#3f6b43] text-[#3f6b43] text-2xl font-black uppercase tracking-wide pointer-events-none">
+            Lecker
+          </motion.div>
+          <motion.div style={{ opacity: nopeOp }} className="absolute top-8 left-6 z-30 -rotate-[14deg] px-3 py-1 rounded-xl border-[3px] border-[#bd5138] text-[#bd5138] text-2xl font-black uppercase tracking-wide pointer-events-none">
+            Nö
+          </motion.div>
+          <motion.div style={{ opacity: superOp }} className="absolute left-1/2 -translate-x-1/2 top-1/3 z-30 -rotate-[6deg] px-3 py-1.5 rounded-xl border-[3px] border-[#d99a2b] text-[#d99a2b] text-xl font-black uppercase tracking-wide pointer-events-none flex items-center gap-1.5">
+            <Star className="w-5 h-5 fill-[#d99a2b]" /> Superlike
+          </motion.div>
+
+          <RecipeCardFace
+            r={current}
+            index={index}
+            total={recipes.length}
+            onOpen={() => onOpen(current)}
+            animateMacros={!prefersReduced}
+          />
+        </motion.div>
+      </div>
+
+      {/* Action-Buttons — Swipe-for-Dinner-Stil, fix unter dem Deck */}
+      <div className="shrink-0 flex items-center justify-center gap-4 pt-3">
+        <button
+          onClick={() => commit("nope")}
+          aria-label="Nö"
+          className="w-14 h-14 rounded-full bg-surface border-2 border-[#bd5138]/40 flex items-center justify-center text-[#bd5138] active:scale-90 transition-transform shadow-sm"
+        >
+          <X className="w-6 h-6" strokeWidth={2.5} />
+        </button>
+        <button
+          onClick={onUndo}
+          disabled={!canUndo}
+          aria-label="Rückgängig"
+          className="w-11 h-11 rounded-full bg-surface border border-border flex items-center justify-center text-text-muted disabled:opacity-30 active:scale-90 transition-transform"
+        >
+          <RotateCcw className="w-4 h-4" />
+        </button>
+        <button
+          onClick={() => commit("super")}
+          aria-label="Superlike"
+          className="w-12 h-12 rounded-full bg-surface border-2 border-[#d99a2b]/45 flex items-center justify-center text-[#d99a2b] active:scale-90 transition-transform shadow-sm"
+        >
+          <Star className="w-5 h-5 fill-[#d99a2b]" />
+        </button>
+        <button
+          onClick={() => commit("like")}
+          aria-label="Lecker"
+          className="w-16 h-16 rounded-full bg-[#3f6b43] flex items-center justify-center text-white active:scale-90 transition-transform shadow-lg"
+          style={{ boxShadow: "0 8px 22px rgba(63,107,67,0.35)" }}
+        >
+          <Check className="w-8 h-8" strokeWidth={2.5} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Ende des Stapels ──────────────────────────────────────────
+
+function DeckDone({
+  likeCount, superCount, onRestart, onShowFavs,
+}: {
+  likeCount: number; superCount: number; onRestart: () => void; onShowFavs: () => void;
+}) {
+  return (
+    <div className="bg-surface border border-border rounded-2xl p-8 text-center space-y-4 mt-2">
+      <div className="text-5xl">🍽️</div>
+      <div>
+        <h2 className="text-lg font-semibold text-text-primary">Durch den Stapel!</h2>
+        <p className="text-sm text-text-muted mt-1">
+          <span className="text-[#3f6b43] font-semibold">{likeCount}× lecker</span>
+          {" · "}
+          <span className="text-[#d99a2b] font-semibold">{superCount}× superlike</span>
+        </p>
+      </div>
+      <div className="flex flex-col gap-2 max-w-xs mx-auto">
+        <button
+          onClick={onShowFavs}
+          className="w-full py-3 rounded-xl bg-accent text-white text-sm font-semibold active:scale-[0.98] transition-transform"
+        >
+          Meine Favoriten ansehen
+        </button>
+        <button
+          onClick={onRestart}
+          className="w-full py-2.5 rounded-xl bg-surface-elevated border border-border text-text-secondary text-sm font-medium active:scale-[0.98] transition-transform"
+        >
+          Nochmal von vorn
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Bento-Grid-Modus ──────────────────────────────────────────
+// Rhythmisches Raster: jede 6er-Gruppe hat 1 grosse Hero-Kachel (2×2).
+
+function RecipeGrid({ recipes, onOpen, verdicts }: { recipes: Recipe[]; onOpen: (r: Recipe) => void; verdicts?: Record<string, Verdict> }) {
+  const isHero = (i: number) => i % 6 === 0;
+
+  return (
+    <div className="grid grid-cols-2 lg:grid-cols-4 auto-rows-[150px] sm:auto-rows-[180px] gap-3 pt-1">
+      {recipes.map((r, i) => {
+        const hero = isHero(i);
+        return (
+          <motion.button
+            key={r.slug}
+            layout
+            onClick={() => onOpen(r)}
+            className={`group relative rounded-2xl overflow-hidden text-left bg-surface-elevated active:scale-[0.98] transition-transform ${
+              hero ? "col-span-2 row-span-2" : ""
+            }`}
+          >
+            <RecipeImage r={r} w={hero ? 800 : 400} className="absolute inset-0 w-full h-full object-cover" />
+            <div className="absolute inset-x-0 bottom-0 h-3/5 bg-gradient-to-t from-black/90 via-black/40 to-transparent" />
+            <span className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-black/55 backdrop-blur-sm text-white text-[10px] font-semibold">
+              {CATEGORY_EMOJI[r.category] ?? "🍽️"}{hero ? ` ${r.category}` : ""}
+            </span>
+            {verdicts?.[r.slug] === "super" && (
+              <span className="absolute top-2 right-2 w-6 h-6 rounded-full bg-[#d99a2b] flex items-center justify-center shadow"><Star className="w-3.5 h-3.5 fill-white text-white" /></span>
+            )}
+            {verdicts?.[r.slug] === "like" && (
+              <span className="absolute top-2 right-2 w-6 h-6 rounded-full bg-[#3f6b43] flex items-center justify-center shadow"><Heart className="w-3.5 h-3.5 fill-white text-white" /></span>
+            )}
+            <div className="absolute inset-x-0 bottom-0 p-2.5 sm:p-3">
+              <p className={`text-white font-bold leading-tight line-clamp-2 drop-shadow ${hero ? "text-base" : "text-xs"}`}>
+                {r.name}
+              </p>
+              {hero && (
+                <p className="text-white/70 text-[11px] mt-1 line-clamp-2">{r.description}</p>
+              )}
+              <div className="flex items-center gap-2 mt-1.5 text-white/80 text-[10px]">
+                {r.totalTime && <span className="flex items-center gap-0.5"><Clock className="w-2.5 h-2.5" />{r.totalTime}</span>}
+                {r.kcal != null && <span>{r.kcal} kcal</span>}
+                {hero && r.protein != null && <span>{r.protein}g P</span>}
+              </div>
+            </div>
+          </motion.button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── Bilder-Galerie im Detail (swipebar) ───────────────────────
+
+function GalleryHeader({ r }: { r: Recipe }) {
+  const imgs = (r.images && r.images.length > 0 ? r.images : (r.image ? [r.image] : []));
+  const [active, setActive] = useState(0);
+
+  if (imgs.length === 0) {
+    return (
+      <div className="flex items-center justify-center w-full h-full bg-surface-elevated">
+        <span className="text-6xl opacity-40">{CATEGORY_EMOJI[r.category] ?? "🍽️"}</span>
+      </div>
+    );
+  }
+
+  if (imgs.length === 1) {
+    const src = imageUrl(imgs[0], 1200);
+    return src ? <Lens src={src} alt={r.name} zoom={2.2} lensSize={150} className="w-full h-full" /> : null;
+  }
+
+  return (
+    <div className="relative w-full h-full">
+      <div
+        className="flex w-full h-full overflow-x-auto snap-x snap-mandatory scrollbar-none"
+        style={{ scrollBehavior: "smooth" }}
+        onScroll={(e) => {
+          const el = e.currentTarget;
+          setActive(Math.round(el.scrollLeft / el.clientWidth));
+        }}
+      >
+        {imgs.map((img, i) => {
+          const src = imageUrl(img, 1200);
+          return (
+            <div key={img + i} className="w-full h-full shrink-0 snap-center bg-surface-elevated">
+              {src && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={src} alt={`${r.name} ${i + 1}`} className="w-full h-full object-cover" draggable={false} loading={i === 0 ? "eager" : "lazy"} />
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <div className="absolute bottom-14 left-1/2 -translate-x-1/2 z-20 flex gap-1.5 pointer-events-none">
+        {imgs.map((_, i) => (
+          <span key={i} className={`h-1.5 rounded-full transition-all ${i === active ? "w-5 bg-white" : "w-1.5 bg-white/50"}`} />
+        ))}
+      </div>
+      <span className="absolute top-3 left-3 z-20 px-2 py-0.5 rounded-full bg-black/55 backdrop-blur-sm text-white text-[10px] font-medium tabular-nums pointer-events-none">
+        {active + 1} / {imgs.length}
+      </span>
+    </div>
+  );
+}
+
+// ── Detail-Sheet ──────────────────────────────────────────────
+
+function RecipeDetail({ r, onClose }: { r: Recipe; onClose: () => void }) {
+  const [checked, setChecked] = useState<Set<string>>(new Set());
+  const prefersReduced = useReducedMotion();
+
+  useEffect(() => {
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = ""; };
+  }, []);
+
+  const toggle = (key: string) => {
+    setChecked((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+
+  const totalIngredients = r.ingredients.reduce((s, g) => s + g.items.length, 0);
+  const checkedCount = checked.size;
+  const isInstagram = r.source ? /instagram\.com/i.test(r.source) : false;
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+      <motion.div
+        initial={{ opacity: prefersReduced ? 1 : 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="absolute inset-0 bg-black/70"
+        onClick={onClose}
+      />
+      <motion.div
+        initial={{ y: prefersReduced ? 0 : "100%" }}
+        animate={{ y: 0 }}
+        exit={{ y: prefersReduced ? 0 : "100%" }}
+        transition={prefersReduced ? { duration: 0 } : { type: "spring", damping: 34, stiffness: 300 }}
+        className="relative w-full sm:max-w-lg max-h-[92vh] overflow-y-auto bg-surface sm:rounded-2xl rounded-t-2xl border border-border"
+      >
+        {/* Header — swipebare Bilder-Galerie */}
+        <div className="relative aspect-[16/10] w-full overflow-hidden bg-surface-elevated">
+          <GalleryHeader r={r} />
+          <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/85 to-transparent pointer-events-none" />
+          <button
+            onClick={onClose}
+            aria-label="Schließen"
+            className="absolute top-3 right-3 z-20 w-9 h-9 rounded-full bg-black/60 backdrop-blur-sm text-white flex items-center justify-center active:scale-95 transition-transform"
+          >
+            <X className="w-4 h-4" />
+          </button>
+          <div className="absolute inset-x-0 bottom-0 p-4 pointer-events-none">
+            <h2 className="text-white text-xl font-bold leading-tight drop-shadow">{r.name}</h2>
+          </div>
+        </div>
+
+        {/* Zutaten-Fortschritt als schwebende Insel */}
+        <AnimatePresence>
+          {checkedCount > 0 && (
+            <motion.div
+              initial={{ y: -20, opacity: 0, scale: 0.9 }}
+              animate={{ y: 0, opacity: 1, scale: 1 }}
+              exit={{ y: -20, opacity: 0, scale: 0.9 }}
+              transition={{ type: "spring", damping: 24, stiffness: 320 }}
+              className="sticky top-2 z-30 mx-auto w-fit flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-black/80 backdrop-blur-md text-white shadow-lg"
+            >
+              <Check className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="text-xs font-semibold tabular-nums">
+                <NumberFlow value={checkedCount} /> / {totalIngredients} Zutaten
+              </span>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <div className="p-4 space-y-5">
+          <p className="text-sm text-text-secondary leading-relaxed">{r.description}</p>
+
+          {/* Überblick */}
+          <div className="grid grid-cols-3 gap-2">
+            {[
+              { icon: Clock, label: "Zeit", value: r.totalTime },
+              { icon: Users, label: "Portionen", value: r.portions },
+              { icon: Flame, label: "Level", value: r.difficulty },
+            ].filter((x) => x.value).map((x) => (
+              <div key={x.label} className="bg-surface-elevated border border-border rounded-xl px-2.5 py-2">
+                <div className="flex items-center gap-1 text-[10px] text-text-muted uppercase tracking-wide">
+                  <x.icon className="w-3 h-3" /> {x.label}
+                </div>
+                <p className="text-sm font-semibold text-text-primary mt-0.5">{x.value}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Makros */}
+          <div>
+            <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">Nährwerte</h3>
+            <MacroChips r={r} animate />
+          </div>
+
+          {/* Zutaten mit Abhak-Funktion */}
+          {r.ingredients.length > 0 && (
+            <div>
+              <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">
+                🛒 Zutaten
+              </h3>
+              <div className="space-y-3">
+                {r.ingredients.map((g, gi) => (
+                  <div key={gi}>
+                    {g.group && (
+                      <p className="text-[11px] font-semibold text-text-secondary mb-1">{g.group}</p>
+                    )}
+                    <div className="space-y-1">
+                      {g.items.map((item, ii) => {
+                        const key = `${gi}-${ii}`;
+                        const isChecked = checked.has(key);
+                        return (
+                          <button
+                            key={key}
+                            onClick={() => toggle(key)}
+                            className="w-full flex items-start gap-2.5 py-2 px-2 rounded-lg text-left active:bg-surface-elevated transition-colors"
+                          >
+                            <span
+                              className={`shrink-0 mt-0.5 w-4 h-4 rounded border flex items-center justify-center text-[10px] ${
+                                isChecked
+                                  ? "bg-accent border-accent text-white"
+                                  : "border-border text-transparent"
+                              }`}
+                            >
+                              ✓
+                            </span>
+                            <span className={`text-sm ${isChecked ? "text-text-muted line-through" : "text-text-secondary"}`}>
+                              {item}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Zubereitung */}
+          {r.steps.length > 0 && (
+            <div>
+              <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">
+                👨‍🍳 Zubereitung
+              </h3>
+              <ol className="space-y-2.5">
+                {r.steps.map((s, i) => (
+                  <li key={i} className="flex gap-3">
+                    <span className="shrink-0 w-6 h-6 rounded-full bg-accent/15 text-accent text-xs font-bold flex items-center justify-center">
+                      {i + 1}
+                    </span>
+                    <p className="text-sm text-text-secondary leading-relaxed">{s}</p>
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
+
+          {/* Tipps */}
+          {r.tips.length > 0 && (
+            <div>
+              <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">
+                💡 Tipps
+              </h3>
+              <ul className="space-y-1.5">
+                {r.tips.map((t, i) => (
+                  <li key={i} className="text-xs text-text-muted leading-relaxed flex gap-2">
+                    <span className="text-accent">·</span>{t}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {r.source && (
+            isInstagram ? (
+              <a
+                href={r.source}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-center gap-2 w-full py-3 rounded-xl text-white text-sm font-semibold active:scale-[0.98] transition-transform"
+                style={{ background: "linear-gradient(120deg,#f09433,#e6683c 30%,#dc2743 60%,#cc2366 90%)" }}
+              >
+                <InstagramIcon className="w-4 h-4" /> Auf Instagram ansehen
+              </a>
+            ) : (
+              <a
+                href={r.source}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl border border-border text-text-muted text-xs active:scale-[0.98] transition-transform"
+              >
+                <ExternalLink className="w-3.5 h-3.5" /> Original-Quelle
+              </a>
+            )
+          )}
+
+          <button
+            onClick={onClose}
+            className="w-full py-3 rounded-xl bg-surface-elevated border border-border text-text-secondary text-sm font-medium"
+          >
+            Schließen
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+// ── Vorschlag einreichen (Gäste) ──────────────────────────────
+
+function SuggestSheet({ onClose }: { onClose: () => void }) {
+  const toast = useToast();
+  const prefersReduced = useReducedMotion();
+  const [name, setName] = useState("");
+  const [link, setLink] = useState("");
+  const [idea, setIdea] = useState("");
+  const [note, setNote] = useState("");
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = ""; };
+  }, []);
+
+  const submit = async () => {
+    if (!idea.trim() && !link.trim()) {
+      toast.error("Fast!", "Gib eine Idee oder einen Link an.");
+      return;
+    }
+    setSending(true);
+    try {
+      const res = await fetch("/api/recipes/suggest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, idea, link, note }),
+      });
+      if (res.ok) {
+        toast.success("Danke!", "Dein Vorschlag ist bei Christian gelandet 🍽️");
+        onClose();
+      } else {
+        const d = await res.json().catch(() => ({}));
+        toast.error("Hat nicht geklappt", d.error ?? "Versuch's gleich nochmal.");
+      }
+    } catch {
+      toast.error("Keine Verbindung", "Versuch's gleich nochmal.");
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+      <motion.div
+        initial={{ opacity: prefersReduced ? 1 : 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        className="absolute inset-0 bg-black/60" onClick={onClose}
+      />
+      <motion.div
+        initial={{ y: prefersReduced ? 0 : "100%" }} animate={{ y: 0 }} exit={{ y: prefersReduced ? 0 : "100%" }}
+        transition={prefersReduced ? { duration: 0 } : { type: "spring", damping: 34, stiffness: 300 }}
+        className="relative w-full sm:max-w-md bg-surface sm:rounded-2xl rounded-t-2xl border border-border p-5 space-y-4"
+      >
+        <div className="flex items-start justify-between">
+          <div>
+            <h2 className="text-lg font-extrabold text-text-primary tracking-tight">Rezept vorschlagen</h2>
+            <p className="text-xs text-text-muted mt-0.5">Instagram-Link oder Idee — Christian baut's nach.</p>
+          </div>
+          <button onClick={onClose} aria-label="Schließen" className="p-1.5 rounded-lg text-text-muted hover:text-text-primary">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="space-y-3">
+          <AnimatedInput label="Dein Name" value={name} onChange={setName} />
+          <AnimatedInput label="Instagram-Link (falls vorhanden)" value={link} onChange={setLink} inputMode="url" />
+          <AnimatedInput label="Idee / Gericht" value={idea} onChange={setIdea} />
+          <AnimatedInput label="Notiz (optional)" value={note} onChange={setNote} />
+        </div>
+
+        <button
+          onClick={submit}
+          disabled={sending}
+          className="w-full py-3 rounded-xl bg-accent text-white text-sm font-semibold active:scale-[0.98] transition-transform disabled:opacity-50 flex items-center justify-center gap-2"
+        >
+          {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+          {sending ? "Sende…" : "Vorschlag absenden"}
+        </button>
+      </motion.div>
+    </div>
+  );
+}
+
+// ── Seite ─────────────────────────────────────────────────────
+
+export default function RezeptePage() {
+  const [recipes, setRecipes] = useState<Recipe[]>([]);
+  const [categories, setCategories] = useState<string[]>([]);
+  const [diag, setDiag] = useState<Diagnostics | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [mode, setMode] = useState<"swipe" | "grid">("swipe");
+  const [activeCat, setActiveCat] = useState("Alle");
+  const [index, setIndex] = useState(0);
+  const [detail, setDetail] = useState<Recipe | null>(null);
+  const [verdicts, setVerdicts] = useState<Record<string, Verdict>>({});
+  const [history, setHistory] = useState<string[]>([]);
+  const [suggestOpen, setSuggestOpen] = useState(false);
+
+  useEffect(() => { setVerdicts(loadVerdicts()); }, []);
+
+  const handleVerdict = useCallback((r: Recipe, v: Verdict) => {
+    saveVerdict(r.slug, v);
+    setVerdicts((prev) => ({ ...prev, [r.slug]: v }));
+    setHistory((prev) => [...prev, r.slug]);
+  }, []);
+
+  const handleUndo = useCallback(() => {
+    setHistory((prev) => {
+      if (prev.length === 0) return prev;
+      const last = prev[prev.length - 1];
+      saveVerdict(last, null);
+      setVerdicts((v) => { const n = { ...v }; delete n[last]; return n; });
+      setIndex((i) => Math.max(0, i - 1));
+      return prev.slice(0, -1);
+    });
+  }, []);
+
+  const likeCount = Object.values(verdicts).filter((v) => v === "like").length;
+  const superCount = Object.values(verdicts).filter((v) => v === "super").length;
+
+  useEffect(() => {
+    fetch("/api/recipes", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => {
+        setRecipes(d.recipes ?? []);
+        setCategories(d.categories ?? []);
+        setDiag(d.diagnostics ?? null);
+        if (d.error) setError(d.error);
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : "Netzwerkfehler"))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const filtered = useMemo(() => {
+    if (activeCat === "Alle") return recipes;
+    return recipes.filter((r) => r.category === activeCat);
+  }, [recipes, activeCat]);
+
+  useEffect(() => { setIndex(0); }, [activeCat]);
+
+  // Vorausladen: die nächsten Karten-Bilder schon holen, damit Wischen instant wirkt.
+  useEffect(() => {
+    if (mode !== "swipe" || filtered.length === 0) return;
+    const AHEAD = 5;
+    for (let i = index; i < Math.min(index + AHEAD, filtered.length); i++) {
+      const r = filtered[i];
+      if (!r?.imageExists || !r.image) continue;
+      const pre = new window.Image();
+      pre.decoding = "async";
+      pre.src = imageUrl(r.image, 800)!;
+    }
+  }, [filtered, index, mode]);
+
+  const showDeck = !loading && mode === "swipe" && filtered.length > 0 && index < filtered.length;
+
+  return (
+    <div className="mx-auto w-full max-w-3xl h-[100dvh] flex flex-col px-4 pt-[max(env(safe-area-inset-top),0.75rem)] pb-[max(env(safe-area-inset-bottom),0.5rem)]">
+      {/* Header */}
+      <div className="flex items-start justify-between gap-2 shrink-0">
+        <div className="min-w-0">
+          <h1 className="text-[1.6rem] font-extrabold text-text-primary tracking-tight leading-none">Rezepte</h1>
+          <p className="text-sm text-text-muted mt-1">
+            {loading ? "Lädt…" : `${filtered.length} von ${recipes.length} · durchwischen`}
+          </p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => setSuggestOpen(true)}
+            className="flex items-center gap-1 px-3 py-2 rounded-full bg-accent text-white text-xs font-semibold active:scale-95 transition-transform whitespace-nowrap"
+          >
+            + Vorschlag
+          </button>
+          <div className="flex items-center rounded-full bg-surface-elevated p-1 gap-0.5 border border-border">
+            {([
+              ["swipe", Layers, "Swipe"],
+              ["grid", LayoutGrid, "Raster"],
+            ] as const).map(([m, Icon, label]) => (
+              <button
+                key={m}
+                onClick={() => setMode(m)}
+                aria-label={label}
+                className={`px-3 py-1.5 rounded-full transition-colors ${
+                  mode === m ? "bg-surface text-text-primary shadow-sm" : "text-text-muted"
+                }`}
+              >
+                <Icon className="w-4 h-4" />
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Kategorie-Filter */}
+      {categories.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 shrink-0 mt-3">
+          {["Alle", ...categories].map((cat) => {
+            const active = activeCat === cat;
+            return (
+              <button
+                key={cat}
+                onClick={() => setActiveCat(cat)}
+                className={`relative px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
+                  active ? "text-white border-accent" : "bg-surface border-border text-text-muted hover:text-text-secondary"
+                }`}
+              >
+                {active && (
+                  <motion.span
+                    layoutId="cat-pill"
+                    className="absolute inset-0 rounded-full bg-accent"
+                    transition={{ type: "spring", stiffness: 380, damping: 32 }}
+                  />
+                )}
+                <span className="relative z-10">
+                  {cat === "Alle" ? "Alle" : `${CATEGORY_EMOJI[cat] ?? ""} ${cat}`}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Inhalt */}
+      <div className={showDeck ? "flex-1 min-h-0 flex flex-col mt-3" : "flex-1 min-h-0 overflow-y-auto overflow-x-hidden mt-3"}>
+        {loading ? (
+          <div className="flex justify-center py-20">
+            <Loader2 className="w-5 h-5 text-text-muted animate-spin" />
+          </div>
+        ) : recipes.length === 0 ? (
+          <div className="bg-surface border border-amber-500/30 rounded-xl p-4 space-y-2">
+            <div className="flex items-center gap-2 text-amber-600">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <p className="text-sm font-semibold">Keine Rezepte gefunden</p>
+            </div>
+            {error && <p className="text-xs text-red-500">{error}</p>}
+            {diag && (
+              <div className="text-[11px] text-text-muted font-mono space-y-0.5">
+                <p>Rezepte: {diag.recipesDir} {diag.recipesDirExists ? "✓" : "✗ nicht erreichbar"}</p>
+                <p>Bilder: {diag.imagesDir} {diag.imagesDirExists ? "✓" : "✗ nicht erreichbar"}</p>
+              </div>
+            )}
+            <p className="text-xs text-text-secondary">
+              Prüfe, ob der Rezept-Ordner gemountet ist (Env <code className="bg-surface-elevated px-1 rounded">OBSIDIAN_RECIPES_PATH</code>).
+            </p>
+          </div>
+        ) : filtered.length > 0 ? (
+          mode === "swipe" ? (
+            index < filtered.length ? (
+              <SwipeDeck
+                recipes={filtered}
+                index={index}
+                setIndex={setIndex}
+                onOpen={setDetail}
+                onVerdict={handleVerdict}
+                onUndo={handleUndo}
+                canUndo={history.length > 0}
+              />
+            ) : (
+              <DeckDone
+                likeCount={likeCount}
+                superCount={superCount}
+                onRestart={() => setIndex(0)}
+                onShowFavs={() => { setActiveCat("Alle"); setMode("grid"); }}
+              />
+            )
+          ) : (
+            <RecipeGrid recipes={filtered} onOpen={setDetail} verdicts={verdicts} />
+          )
+        ) : (
+          <p className="text-center text-sm text-text-muted py-12">
+            Keine Rezepte in dieser Kategorie
+          </p>
+        )}
+      </div>
+
+      {/* Detail-Sheet */}
+      <AnimatePresence>
+        {detail && <RecipeDetail r={detail} onClose={() => setDetail(null)} />}
+      </AnimatePresence>
+
+      {/* Vorschlag einreichen */}
+      <AnimatePresence>
+        {suggestOpen && <SuggestSheet onClose={() => setSuggestOpen(false)} />}
+      </AnimatePresence>
+    </div>
+  );
+}
