@@ -350,11 +350,11 @@ function SwipeDeck({
             springBack();
           }}
         >
-          {/* Verdict-Stamps */}
-          <motion.div style={{ opacity: likeOp }} className="absolute top-8 right-6 z-30 rotate-[14deg] px-3 py-1 rounded-xl border-[3px] border-[#3f6b43] text-[#3f6b43] text-2xl font-black uppercase tracking-wide pointer-events-none">
+          {/* Verdict-Stamps — mittig, damit sie beim Wischen nicht aus dem Bild wandern */}
+          <motion.div style={{ opacity: likeOp }} className="absolute top-24 left-1/2 -translate-x-1/2 z-30 rotate-[8deg] px-4 py-1.5 rounded-2xl border-[4px] border-[#57a75f] text-[#57a75f] text-[2.1rem] font-black uppercase tracking-wide pointer-events-none bg-white/25 backdrop-blur-[2px]">
             Lecker
           </motion.div>
-          <motion.div style={{ opacity: nopeOp }} className="absolute top-8 left-6 z-30 -rotate-[14deg] px-3 py-1 rounded-xl border-[3px] border-[#bd5138] text-[#bd5138] text-2xl font-black uppercase tracking-wide pointer-events-none">
+          <motion.div style={{ opacity: nopeOp }} className="absolute top-24 left-1/2 -translate-x-1/2 z-30 -rotate-[8deg] px-4 py-1.5 rounded-2xl border-[4px] border-[#bd5138] text-[#bd5138] text-[2.1rem] font-black uppercase tracking-wide pointer-events-none bg-white/25 backdrop-blur-[2px]">
             Nö
           </motion.div>
           <motion.div style={{ opacity: superOp }} className="absolute left-1/2 -translate-x-1/2 top-1/3 z-30 -rotate-[6deg] px-3 py-1.5 rounded-xl border-[3px] border-[#d99a2b] text-[#d99a2b] text-xl font-black uppercase tracking-wide pointer-events-none flex items-center gap-1.5">
@@ -398,8 +398,8 @@ function SwipeDeck({
         <button
           onClick={() => commit("like")}
           aria-label="Lecker"
-          className="w-16 h-16 rounded-full bg-[#3f6b43] flex items-center justify-center text-white active:scale-90 transition-transform shadow-lg"
-          style={{ boxShadow: "0 8px 22px rgba(63,107,67,0.35)" }}
+          className="w-16 h-16 rounded-full bg-[#4f9a58] flex items-center justify-center text-white active:scale-90 transition-transform shadow-lg"
+          style={{ boxShadow: "0 8px 22px rgba(79,154,88,0.38)" }}
         >
           <Check className="w-8 h-8" strokeWidth={2.5} />
         </button>
