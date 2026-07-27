@@ -53,6 +53,8 @@ interface Recipe {
 type Verdict = "like" | "nope" | "super";
 
 const FAV_KEY = "rezepte-verdicts-v1";
+const NAME_KEY = "rezepte-guest-name";
+const ID_KEY = "rezepte-guest-id";
 
 function loadVerdicts(): Record<string, Verdict> {
   if (typeof window === "undefined") return {};
@@ -64,6 +66,19 @@ function saveVerdict(slug: string, v: Verdict | null) {
     if (v === null) delete all[slug]; else all[slug] = v;
     localStorage.setItem(FAV_KEY, JSON.stringify(all));
   } catch { /* ignore */ }
+}
+
+// Verdict ans Backend schicken (fire-and-forget — UI hängt nicht davon ab)
+function postVerdict(body: {
+  guestId: string; name: string; slug: string;
+  recipeName?: string; category?: string; verdict: Verdict | null;
+}) {
+  fetch("/api/verdict", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    keepalive: true,
+  }).catch(() => { /* offline egal — localStorage bleibt Quelle der Wahrheit für die UI */ });
 }
 
 interface Diagnostics {
@@ -793,6 +808,58 @@ function SuggestSheet({ onClose }: { onClose: () => void }) {
   );
 }
 
+// ── Name-Gate (Pflicht vor dem Wischen) ───────────────────────
+// Ohne Namen kein Weiterkommen. Name + zufällige guestId landen in localStorage
+// und begleiten jedes Verdict, damit Christian sieht, wem was schmeckt.
+
+function NameGate({ onDone }: { onDone: (name: string, id: string) => void }) {
+  const [name, setName] = useState("");
+
+  const submit = () => {
+    const n = name.trim();
+    if (!n) return;
+    let id = "";
+    try { id = localStorage.getItem(ID_KEY) || ""; } catch { /* ignore */ }
+    if (!id) {
+      id = (typeof crypto !== "undefined" && crypto.randomUUID)
+        ? crypto.randomUUID()
+        : `g_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+    }
+    try { localStorage.setItem(NAME_KEY, n); localStorage.setItem(ID_KEY, id); } catch { /* ignore */ }
+    onDone(n, id);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-6" style={{ background: "var(--bg)", color: "var(--text-primary)" }}>
+      <motion.div
+        initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }}
+        transition={{ type: "spring", damping: 26, stiffness: 260 }}
+        className="w-full max-w-sm text-center"
+      >
+        <div className="text-5xl mb-4">🍽️</div>
+        <h1 className="text-[1.7rem] font-extrabold text-text-primary tracking-tight leading-tight">Wisch dich satt</h1>
+        <p className="text-sm text-text-secondary mt-2 mb-6 leading-relaxed">
+          Sag mir kurz, wie du heißt — damit Christian sieht, was dir schmeckt.
+        </p>
+        <div className="bg-surface border border-border rounded-3xl p-5 shadow-[0_10px_30px_rgba(70,50,30,0.10)]">
+          <AnimatedInput
+            label="Dein Name" value={name} onChange={setName} autoFocus
+            onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
+          />
+          <button
+            onClick={submit}
+            disabled={!name.trim()}
+            className="mt-4 w-full py-3 rounded-xl bg-accent text-white text-sm font-semibold active:scale-[0.98] transition-transform disabled:opacity-50 flex items-center justify-center gap-1"
+          >
+            Los geht&apos;s <ChevronRight className="w-4 h-4" />
+          </button>
+        </div>
+        <p className="text-[11px] text-text-muted mt-4">Kein Account, kein Passwort. Nur dein Name.</p>
+      </motion.div>
+    </div>
+  );
+}
+
 // ── Seite ─────────────────────────────────────────────────────
 
 export default function RezeptePage() {
@@ -808,14 +875,29 @@ export default function RezeptePage() {
   const [verdicts, setVerdicts] = useState<Record<string, Verdict>>({});
   const [history, setHistory] = useState<string[]>([]);
   const [suggestOpen, setSuggestOpen] = useState(false);
+  const [guestName, setGuestName] = useState<string | null>(null);
+  const [guestId, setGuestId] = useState<string>("");
+  const [hydrated, setHydrated] = useState(false);
 
-  useEffect(() => { setVerdicts(loadVerdicts()); }, []);
+  useEffect(() => {
+    setVerdicts(loadVerdicts());
+    try {
+      const n = localStorage.getItem(NAME_KEY);
+      const id = localStorage.getItem(ID_KEY);
+      if (n) setGuestName(n);
+      if (id) setGuestId(id);
+    } catch { /* ignore */ }
+    setHydrated(true);
+  }, []);
 
   const handleVerdict = useCallback((r: Recipe, v: Verdict) => {
     saveVerdict(r.slug, v);
     setVerdicts((prev) => ({ ...prev, [r.slug]: v }));
     setHistory((prev) => [...prev, r.slug]);
-  }, []);
+    if (guestId && guestName) {
+      postVerdict({ guestId, name: guestName, slug: r.slug, recipeName: r.name, category: r.category, verdict: v });
+    }
+  }, [guestId, guestName]);
 
   const handleUndo = useCallback(() => {
     setHistory((prev) => {
@@ -824,9 +906,10 @@ export default function RezeptePage() {
       saveVerdict(last, null);
       setVerdicts((v) => { const n = { ...v }; delete n[last]; return n; });
       setIndex((i) => Math.max(0, i - 1));
+      if (guestId && guestName) postVerdict({ guestId, name: guestName, slug: last, verdict: null });
       return prev.slice(0, -1);
     });
-  }, []);
+  }, [guestId, guestName]);
 
   const likeCount = Object.values(verdicts).filter((v) => v === "like").length;
   const superCount = Object.values(verdicts).filter((v) => v === "super").length;
@@ -866,16 +949,15 @@ export default function RezeptePage() {
 
   const showDeck = !loading && mode === "swipe" && filtered.length > 0 && index < filtered.length;
 
+  // Vor allem anderen: Name abfragen (nach dem Lesen aus localStorage, um Flackern zu vermeiden)
+  if (!hydrated) return <div className="h-[100dvh]" />;
+  if (!guestName) return <NameGate onDone={(n, id) => { setGuestName(n); setGuestId(id); }} />;
+
   return (
-    <div className="mx-auto w-full max-w-3xl h-[100dvh] flex flex-col px-4 pt-[max(env(safe-area-inset-top),0.75rem)] pb-[max(env(safe-area-inset-bottom),0.5rem)]">
+    <div className="mx-auto w-full max-w-3xl h-[100dvh] flex flex-col px-4 pt-[max(env(safe-area-inset-top),0.75rem)] pb-[max(env(safe-area-inset-bottom),1.75rem)]">
       {/* Header */}
-      <div className="flex items-start justify-between gap-2 shrink-0">
-        <div className="min-w-0">
-          <h1 className="text-[1.6rem] font-extrabold text-text-primary tracking-tight leading-none">Rezepte</h1>
-          <p className="text-sm text-text-muted mt-1">
-            {loading ? "Lädt…" : `${filtered.length} von ${recipes.length} · durchwischen`}
-          </p>
-        </div>
+      <div className="flex items-center justify-between gap-2 shrink-0">
+        <h1 className="text-[1.6rem] font-extrabold text-text-primary tracking-tight leading-none">Rezepte</h1>
         <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={() => setSuggestOpen(true)}

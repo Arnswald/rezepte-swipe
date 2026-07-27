@@ -1,6 +1,8 @@
 # ── Stage 1: Dependencies ──────────────────────────────────────
 FROM node:20-alpine AS deps
 WORKDIR /app
+# Build-Tools für native Module (better-sqlite3) — falls kein Prebuild passt
+RUN apk add --no-cache python3 make g++
 COPY package.json package-lock.json ./
 RUN npm ci
 

@@ -141,7 +141,32 @@ dran — **kein** neuer Tunnel nötig.
 
 Eingegangene **Vorschläge** landen im Volume unter
 `/app/data/rezept-vorschlaege.md` (in Portainer über das `rezepte-data`-Volume
-einsehbar). In Phase 2 wird das an n8n → Obsidian-Inbox/Telegram gehängt.
+einsehbar). In Phase 3 wird das an n8n → Obsidian-Inbox/Telegram gehängt.
+
+### Name-Login + Admin-Auswertung (v2)
+
+Gäste geben beim Öffnen einmalig **ihren Namen** ein (sonst kein Wischen). Jede
+Bewertung (lecker / nö / superlike) wird serverseitig in einer SQLite-DB im
+`rezepte-data`-Volume gespeichert (`/app/data/rezepte.db`).
+
+Du siehst die Auswertung unter **`https://rezepte.christianarns.de/admin`** —
+Beliebteste Gerichte, wer was mag, letzte Aktivität. Geschützt per PIN:
+
+1. In Portainer beim Stack `rezepte-swipe` unter **Environment variables** eine
+   Variable **`ADMIN_PIN`** mit einem Wert deiner Wahl anlegen (z.B. eine 4-6-stellige Zahl).
+2. Stack **Update / Redeploy**.
+3. `/admin` öffnen, PIN eingeben.
+
+Ohne gesetzten `ADMIN_PIN` ist `/admin` gesperrt (503). Der PIN ist dein Geheimnis —
+gehört NICHT ins Repo, nur in Portainer.
+
+### Nach einem Code-Update neu ausrollen
+
+Nach `git push` baut die CI ein neues Image. Weil Portainer CE keinen
+Auto-Deploy-Webhook hat (Bezahl-Feature), danach in Portainer:
+Stack `rezepte-swipe` → **Editor** → **Update the stack** mit Häkchen bei
+**Re-pull image and redeploy**. (Neue Rezepte/Bilder brauchen das NICHT — die
+kommen live über den read-only Mount.)
 
 ---
 

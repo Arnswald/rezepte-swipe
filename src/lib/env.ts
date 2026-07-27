@@ -12,4 +12,6 @@ export const env = {
   DATA_DIR: process.env.DATA_DIR ?? "./data",
   /** Optional (Phase 2): Vorschläge zusätzlich an einen n8n-Webhook posten */
   N8N_SUGGEST_WEBHOOK: process.env.N8N_SUGGEST_WEBHOOK,
+  /** PIN für die Admin-Statistik (/admin). Ohne PIN ist die Admin-Seite gesperrt. */
+  ADMIN_PIN: process.env.ADMIN_PIN,
 };

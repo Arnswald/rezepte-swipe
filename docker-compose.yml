@@ -28,7 +28,9 @@ services:
       - DATA_DIR=/app/data
       - OBSIDIAN_RECIPES_PATH=/app/recipes
       - OBSIDIAN_IMAGES_PATH=/app/recipes/Bilder
-      # Optional (Phase 2): Vorschläge zusätzlich an n8n → Telegram/Obsidian
+      # PIN für die Admin-Auswertung unter /admin (Wert in Portainer setzen)
+      - ADMIN_PIN=${ADMIN_PIN:-}
+      # Optional (Phase 3): Vorschläge zusätzlich an n8n → Telegram/Obsidian
       - N8N_SUGGEST_WEBHOOK=${N8N_SUGGEST_WEBHOOK:-}
 
 volumes:
