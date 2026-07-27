@@ -23,16 +23,20 @@ export interface VerdictRow {
   updated_at: string;
 }
 
-// Singleton (Next.js kann das Modul mehrfach laden → global cachen)
+// LAZY-Singleton: die DB wird NICHT beim Import geöffnet, sondern erst beim
+// ersten echten Aufruf zur Laufzeit. Wichtig: Beim `next build` importieren
+// mehrere Worker die Route-Module parallel — würde die DB hier beim Import
+// geöffnet, gäbe es „database is locked". Deshalb strikt lazy.
 const globalForDb = globalThis as unknown as { rezepteDb?: Database.Database };
 
-function createDb(): Database.Database {
+function getDb(): Database.Database {
+  if (globalForDb.rezepteDb) return globalForDb.rezepteDb;
   const dir = env.DATA_DIR;
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  const db = new Database(join(dir, "rezepte.db"));
-  db.pragma("journal_mode = WAL");
-  db.pragma("busy_timeout = 5000");
-  db.exec(`
+  const database = new Database(join(dir, "rezepte.db"));
+  database.pragma("journal_mode = WAL");
+  database.pragma("busy_timeout = 5000");
+  database.exec(`
     CREATE TABLE IF NOT EXISTS verdicts (
       guest_id    TEXT NOT NULL,
       name        TEXT NOT NULL,
@@ -46,17 +50,15 @@ function createDb(): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_verdicts_slug ON verdicts(slug);
     CREATE INDEX IF NOT EXISTS idx_verdicts_name ON verdicts(name);
   `);
-  return db;
+  globalForDb.rezepteDb = database;
+  return database;
 }
-
-export const db: Database.Database = globalForDb.rezepteDb ?? createDb();
-if (process.env.NODE_ENV !== "production") globalForDb.rezepteDb = db;
 
 /** Setzt/aktualisiert ein Verdict (upsert). now = ISO-Timestamp (Route liefert ihn). */
 export function upsertVerdict(v: {
   guestId: string; name: string; slug: string; recipeName: string; category: string; verdict: Verdict; now: string;
 }) {
-  db.prepare(`
+  getDb().prepare(`
     INSERT INTO verdicts (guest_id, name, slug, recipe_name, category, verdict, updated_at)
     VALUES (@guestId, @name, @slug, @recipeName, @category, @verdict, @now)
     ON CONFLICT(guest_id, slug) DO UPDATE SET
@@ -67,10 +69,10 @@ export function upsertVerdict(v: {
 
 /** Entfernt ein Verdict (Undo). */
 export function deleteVerdict(guestId: string, slug: string) {
-  db.prepare(`DELETE FROM verdicts WHERE guest_id = ? AND slug = ?`).run(guestId, slug);
+  getDb().prepare(`DELETE FROM verdicts WHERE guest_id = ? AND slug = ?`).run(guestId, slug);
 }
 
 /** Alle Verdicts (für die Admin-Auswertung — Datenmenge ist klein). */
 export function getAllVerdicts(): VerdictRow[] {
-  return db.prepare(`SELECT * FROM verdicts ORDER BY updated_at DESC`).all() as VerdictRow[];
+  return getDb().prepare(`SELECT * FROM verdicts ORDER BY updated_at DESC`).all() as VerdictRow[];
 }
