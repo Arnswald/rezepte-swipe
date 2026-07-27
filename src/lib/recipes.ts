@@ -304,6 +304,29 @@ export function scanRecipes(): Recipe[] {
   return recipes;
 }
 
+/**
+ * Ein einzelnes Rezept per Slug (Dateiname ohne .md) — für die teilbare
+ * Detail-Seite `/rezept/[slug]`. Case-insensitiv, damit geteilte Links robust sind.
+ */
+export function getRecipeBySlug(slug: string): Recipe | null {
+  const dir = recipesDir();
+  if (!dir || !existsSync(dir) || !slug) return null;
+  const imgDir = imagesDir();
+  const target = `${slug}.md`;
+  // Schnellweg: exakter Dateiname
+  if (existsSync(join(dir, target))) {
+    return parseRecipeFile(join(dir, target), imgDir);
+  }
+  // Fallback: case-insensitiver Scan (Linux-Container)
+  try {
+    const lower = target.toLowerCase();
+    for (const f of readdirSync(dir)) {
+      if (f.toLowerCase() === lower) return parseRecipeFile(join(dir, f), imgDir);
+    }
+  } catch { /* Ordner nicht lesbar */ }
+  return null;
+}
+
 /** Diagnose: sind Rezept- und Bild-Ordner im Container erreichbar? */
 export function recipesDiagnostics() {
   const v = vaultPath();

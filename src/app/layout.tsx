@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Outfit } from "next/font/google";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { ToastProvider } from "@/components/ui/Toast";
+import { env } from "@/lib/env";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -16,6 +17,7 @@ const outfit = Outfit({
 });
 
 export const metadata: Metadata = {
+  metadataBase: new URL(env.SITE_URL),
   title: "Rezepte — swipe dich satt",
   description:
     "Wisch dich durch Christians Lieblingsrezepte. Nach rechts für lecker, hoch für Superlike.",

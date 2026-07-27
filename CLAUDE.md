@@ -103,6 +103,7 @@ mergen will: `kategorie:`-Frontmatter in `06 Research/Gerichte/*.md` ändern.
 | `OBSIDIAN_VAULT_PATH` | Fallback, wenn ganzer Vault gemountet (Dashboard-Modus) | — |
 | `DATA_DIR` | Schreibbares Volume: Bild-Cache + Vorschläge + `rezepte.db` | `/app/data` |
 | `ADMIN_PIN` | PIN für `/admin`. Ohne PIN ist die Admin-Seite gesperrt (503). | `4711` |
+| `SITE_URL` | Öffentliche Basis-URL für absolute OG-/Teilen-Links. Default: prod. | `https://rezepte.christianarns.de` |
 | `N8N_SUGGEST_WEBHOOK` | Optional: Vorschläge zusätzlich an n8n posten | — |
 | `TZ` | Zeitzone für Timestamps | `Europe/Berlin` |
 
@@ -138,25 +139,52 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
 - **v2 (gebaut, 27.07.2026)**: Name-Gate (Pflicht), Verdicts serverseitig (SQLite),
   Admin-Auswertung `/admin` (PIN). Muss auf dem Server noch ausgerollt +
   `ADMIN_PIN` gesetzt werden. ✅ Code / ⏳ Deploy
-- **Phase 3 (offen)**: Superlike → n8n-Webhook → **Telegram**-Push an Christian
-  (Env `N8N_SUGGEST_WEBHOOK` existiert schon für Vorschläge; für Superlikes
-  analog einen Webhook-Post in `handleVerdict` ergänzen).
+- **v3 (im Bau, 27.07.2026): Account & Match.** Grundsatz-Entscheidungen:
+  - **3-Tab-Navigation** oben zentriert: **Swipe · Raster · Account**. „+ Vorschlag"
+    ist aus dem Header raus und lebt jetzt auf der Account-Seite.
+  - **Freundescode-Pairing** (KEIN Login): jeder Gast bekommt einen Code mit
+    Namen drin (z.B. `MELI-4K2`). Man gibt den Code des anderen ein → Verbindung.
+    Identität bleibt `guestId` im localStorage → **pro Gerät**, nicht
+    geräteübergreifend. Bewusst so gewählt (Aufwand sparen).
+  - **Matches = „beide mögen es"** (persistent): Schnittmenge der Likes/Superlikes
+    zweier verbundener Gäste; Doppel-Superlike hervorgehoben. Live-Session
+    („für heute Abend", Echtzeit) ist Phase v4.
+  - **Raster = Trending**: Ecken-Badge zeigt aggregierte Like-/Superlike-Zahl
+    (öffentlich, keine Namen) statt Kategorie-Icon; Sortierung nach Beliebtheit.
+    **Suche** (schwebend unten, fadet beim Scrollen) filtert nach Name/Beschreibung.
+  - **Kategorie-Labels gekürzt** (nur Anzeige): `Hauptgericht` → **„Gerichte"**.
+    Vault-Frontmatter bleibt `Hauptgericht` — nur `CATEGORY_LABEL`-Map in `page.tsx`.
+  - **Teilbare Rezept-Seiten** `/rezept/[slug]` (server-gerendert, OG-Tags → schöne
+    WhatsApp-Vorschau). Teilen-Button nutzt `navigator.share`, Fallback WhatsApp/Copy.
+- **v4 (offen): Live-Match-Session** — gemeinsames Swipen in Echtzeit, „Match für
+  heute Abend"-Popup beim gemeinsamen Rechts-Swipe (braucht Realtime/Polling).
+- **v4 (offen): Richtiger Login** — Code/Magic-Link statt nur localStorage, damit
+  Identität **geräteübergreifend** hält und die iOS-Safari-7-Tage-Storage-Löschung
+  (greift nur ohne Home-Screen-PWA) umgangen wird. Bewusst zurückgestellt; ggf.
+  später umsetzen, wenn der Freundeskreis wächst / Leute mehrere Geräte nutzen.
 - **Offen**: Vorschläge → n8n → Obsidian-Inbox (`01 Inbox/Rezept-Vorschläge.md`).
-- **Ideen**: Reset/„nochmal von vorn" pro Gast, geteilte Favoriten-Liste,
-  Gericht-Detail-Statistik im Admin, Export.
+  (Telegram-Push & n8n-Automationen aktuell **nicht** gewünscht.)
+- **Ideen**: Reset/„nochmal von vorn" pro Gast, saisonale Trending-Gewichtung
+  (Spargelzeit etc.), Gericht-Detail-Statistik im Admin, Export.
 
 ## Wichtige Dateien
 
 | Datei | Zweck |
 |---|---|
-| `src/app/page.tsx` | Name-Gate, Swipe-Deck, Raster, Detail-Sheet, Vorschlag-Sheet |
+| `src/app/page.tsx` | Name-Gate, 3-Tab-Nav (Swipe/Raster/Account), Deck, Raster (Trending+Suche), Detail-Sheet, AccountView, Deep-Link `?rezept=` |
 | `src/app/admin/page.tsx` | Admin-Auswertung (PIN-Gate + Dashboard) |
-| `src/lib/recipes.ts` | Rezept-Parser (Markdown + Frontmatter → Recipe) |
-| `src/lib/db.ts` | better-sqlite3: `verdicts`-Tabelle, upsert/delete/getAll |
-| `src/lib/env.ts` | Env-Zugriff (RECIPES-Pfade, DATA_DIR, ADMIN_PIN, Webhook) |
-| `src/app/api/verdict/route.ts` | POST: Verdict speichern/löschen |
+| `src/app/rezept/[slug]/page.tsx` | Teilbare, server-gerenderte Rezept-Seite (OG-Tags) |
+| `src/components/ShareButton.tsx` | Teilen via `navigator.share`, Fallback Link-Copy |
+| `src/lib/recipes.ts` | Rezept-Parser (+ `getRecipeBySlug` für die Detail-Seite) |
+| `src/lib/db.ts` | better-sqlite3: `verdicts` + v3 `guests`/`connections`, Codes/Matches/Trending |
+| `src/lib/env.ts` | Env-Zugriff (RECIPES-Pfade, DATA_DIR, ADMIN_PIN, SITE_URL, Webhook) |
+| `src/app/api/verdict/route.ts` | POST: Verdict speichern/löschen (+ `ensureGuest`) |
+| `src/app/api/friends/register/route.ts` | POST: Gast anlegen → Freundescode |
+| `src/app/api/friends/connect/route.ts` | POST: per Code verbinden |
+| `src/app/api/friends/matches/route.ts` | POST: Verbindungen + Matches („beide mögen es") |
 | `src/app/api/admin/stats/route.ts` | GET (x-admin-pin): aggregierte Auswertung |
 | `src/app/api/recipes/route.ts` | GET: alle Rezepte + Kategorien |
+| `src/app/api/recipes/trending/route.ts` | GET: öffentliche Beliebtheits-Zähler (keine Namen) |
 | `src/app/api/recipes/image/[name]/route.ts` | Bild → WebP, Disk-Cache |
 | `src/app/api/recipes/suggest/route.ts` | Gast-Vorschläge entgegennehmen |
 | `src/components/ui/` | NumberFlow, Lens, AnimatedInput, Toast |

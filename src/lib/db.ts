@@ -49,6 +49,22 @@ function getDb(): Database.Database {
     );
     CREATE INDEX IF NOT EXISTS idx_verdicts_slug ON verdicts(slug);
     CREATE INDEX IF NOT EXISTS idx_verdicts_name ON verdicts(name);
+
+    -- v3: Gäste mit teilbarem Freundescode (Name steckt im Code, z.B. MELI-4K2)
+    CREATE TABLE IF NOT EXISTS guests (
+      guest_id    TEXT PRIMARY KEY,
+      name        TEXT NOT NULL,
+      friend_code TEXT NOT NULL UNIQUE,
+      created_at  TEXT NOT NULL
+    );
+
+    -- v3: Verbindungen zwischen zwei Gästen. Paar normalisiert (a < b), 1 Zeile pro Paar.
+    CREATE TABLE IF NOT EXISTS connections (
+      guest_a    TEXT NOT NULL,
+      guest_b    TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (guest_a, guest_b)
+    );
   `);
   globalForDb.rezepteDb = database;
   return database;
@@ -75,4 +91,172 @@ export function deleteVerdict(guestId: string, slug: string) {
 /** Alle Verdicts (für die Admin-Auswertung — Datenmenge ist klein). */
 export function getAllVerdicts(): VerdictRow[] {
   return getDb().prepare(`SELECT * FROM verdicts ORDER BY updated_at DESC`).all() as VerdictRow[];
+}
+
+// ── v3: Gäste, Freundescodes, Verbindungen, Matches, Trending ──────────────
+
+export interface GuestRow {
+  guest_id: string;
+  name: string;
+  friend_code: string;
+  created_at: string;
+}
+
+/** Match-Eintrag: ein Gericht, das ich UND ein:e Freund:in mögen. */
+export interface MatchRecipe {
+  slug: string;
+  recipeName: string;
+  category: string;
+  mine: Verdict;
+  theirs: Verdict;
+  bothSuper: boolean;
+}
+
+export interface MatchGroup {
+  partner: { guestId: string; name: string; friendCode: string };
+  recipes: MatchRecipe[];
+}
+
+// Codes ohne verwechselbare Zeichen (kein 0/O, 1/I) — leichter vorzulesen/tippen.
+const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+function codePrefix(name: string): string {
+  const letters = name.toUpperCase().replace(/[^A-ZÄÖÜ]/g, "").replace(/Ä/g, "AE").replace(/Ö/g, "OE").replace(/Ü/g, "UE");
+  const p = letters.slice(0, 4);
+  return p.length >= 2 ? p : "GAST";
+}
+
+function randomSuffix(len = 3): string {
+  let s = "";
+  for (let i = 0; i < len; i++) s += CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)];
+  return s;
+}
+
+/** Erzeugt einen eindeutigen Freundescode mit Namens-Präfix, z.B. MELI-4K2. */
+function generateFriendCode(db: Database.Database, name: string): string {
+  const prefix = codePrefix(name);
+  const exists = db.prepare(`SELECT 1 FROM guests WHERE friend_code = ?`);
+  for (let attempt = 0; attempt < 40; attempt++) {
+    const code = `${prefix}-${randomSuffix(attempt < 20 ? 3 : 4)}`;
+    if (!exists.get(code)) return code;
+  }
+  // Extrem unwahrscheinlich — Fallback mit langem Suffix
+  return `${prefix}-${randomSuffix(6)}`;
+}
+
+/**
+ * Stellt sicher, dass ein Gast existiert (mit Code) und hält den Namen aktuell.
+ * Idempotent: legt Code nur einmal an, überschreibt ihn nie. Gibt den Gast zurück.
+ */
+export function ensureGuest(guestId: string, name: string, now: string): GuestRow {
+  const db = getDb();
+  const existing = db.prepare(`SELECT * FROM guests WHERE guest_id = ?`).get(guestId) as GuestRow | undefined;
+  if (existing) {
+    if (name && name !== existing.name) {
+      db.prepare(`UPDATE guests SET name = ? WHERE guest_id = ?`).run(name, guestId);
+      existing.name = name;
+    }
+    return existing;
+  }
+  const friend_code = generateFriendCode(db, name || "Gast");
+  db.prepare(
+    `INSERT INTO guests (guest_id, name, friend_code, created_at) VALUES (?, ?, ?, ?)`,
+  ).run(guestId, name || "Gast", friend_code, now);
+  return { guest_id: guestId, name: name || "Gast", friend_code, created_at: now };
+}
+
+/** Sucht einen Gast per Freundescode (case-insensitiv, Bindestrich egal). */
+export function getGuestByCode(code: string): GuestRow | undefined {
+  const norm = code.trim().toUpperCase().replace(/\s/g, "");
+  const db = getDb();
+  // exakt (mit Bindestrich) zuerst, sonst tolerant ohne Sonderzeichen
+  const exact = db.prepare(`SELECT * FROM guests WHERE UPPER(friend_code) = ?`).get(norm) as GuestRow | undefined;
+  if (exact) return exact;
+  const stripped = norm.replace(/[^A-Z0-9]/g, "");
+  return db
+    .prepare(`SELECT * FROM guests WHERE REPLACE(UPPER(friend_code), '-', '') = ?`)
+    .get(stripped) as GuestRow | undefined;
+}
+
+/** Normalisiert ein Paar, damit jede Verbindung nur einmal gespeichert wird. */
+function pair(a: string, b: string): [string, string] {
+  return a < b ? [a, b] : [b, a];
+}
+
+export type ConnectResult =
+  | { ok: true; partner: GuestRow; already: boolean }
+  | { ok: false; reason: "self" | "not_found" };
+
+/**
+ * Verbindet den Gast `guestId` mit dem Inhaber von `code`.
+ * `ensureGuest` muss für den Aufrufer vorher aufgerufen werden (macht die Route).
+ */
+export function connectByCode(guestId: string, code: string, now: string): ConnectResult {
+  const target = getGuestByCode(code);
+  if (!target) return { ok: false, reason: "not_found" };
+  if (target.guest_id === guestId) return { ok: false, reason: "self" };
+  const [a, b] = pair(guestId, target.guest_id);
+  const db = getDb();
+  const existed = db.prepare(`SELECT 1 FROM connections WHERE guest_a = ? AND guest_b = ?`).get(a, b);
+  if (!existed) {
+    db.prepare(`INSERT INTO connections (guest_a, guest_b, created_at) VALUES (?, ?, ?)`).run(a, b, now);
+  }
+  return { ok: true, partner: target, already: !!existed };
+}
+
+/** Alle verbundenen Gäste eines Gasts. */
+export function getConnections(guestId: string): GuestRow[] {
+  const db = getDb();
+  const rows = db
+    .prepare(`SELECT guest_a, guest_b FROM connections WHERE guest_a = ? OR guest_b = ?`)
+    .all(guestId, guestId) as { guest_a: string; guest_b: string }[];
+  const partnerIds = rows.map((r) => (r.guest_a === guestId ? r.guest_b : r.guest_a));
+  if (partnerIds.length === 0) return [];
+  const placeholders = partnerIds.map(() => "?").join(",");
+  return db
+    .prepare(`SELECT * FROM guests WHERE guest_id IN (${placeholders})`)
+    .all(...partnerIds) as GuestRow[];
+}
+
+/**
+ * Matches für einen Gast: pro Verbindung die Gerichte, die BEIDE mögen
+ * (Verdict like oder super). Doppel-Superlike wird markiert.
+ */
+export function getMatches(guestId: string): MatchGroup[] {
+  const db = getDb();
+  const partners = getConnections(guestId);
+  const stmt = db.prepare(`
+    SELECT a.slug AS slug, a.recipe_name AS recipeName, a.category AS category,
+           a.verdict AS mine, b.verdict AS theirs
+    FROM verdicts a
+    JOIN verdicts b ON a.slug = b.slug
+    WHERE a.guest_id = @me AND b.guest_id = @partner
+      AND a.verdict IN ('like','super') AND b.verdict IN ('like','super')
+    ORDER BY (a.verdict = 'super' AND b.verdict = 'super') DESC, a.recipe_name ASC
+  `);
+  const groups: MatchGroup[] = [];
+  for (const p of partners) {
+    const rows = stmt.all({ me: guestId, partner: p.guest_id }) as Omit<MatchRecipe, "bothSuper">[];
+    groups.push({
+      partner: { guestId: p.guest_id, name: p.name, friendCode: p.friend_code },
+      recipes: rows.map((r) => ({ ...r, bothSuper: r.mine === "super" && r.theirs === "super" })),
+    });
+  }
+  return groups;
+}
+
+/** Öffentliche Aggregat-Zähler pro Gericht (KEINE Namen): likes = like+super, supers = super. */
+export function getTrendingCounts(): Record<string, { likes: number; supers: number }> {
+  const rows = getDb()
+    .prepare(`
+      SELECT slug,
+             SUM(CASE WHEN verdict IN ('like','super') THEN 1 ELSE 0 END) AS likes,
+             SUM(CASE WHEN verdict = 'super' THEN 1 ELSE 0 END) AS supers
+      FROM verdicts
+      GROUP BY slug
+    `)
+    .all() as { slug: string; likes: number; supers: number }[];
+  const out: Record<string, { likes: number; supers: number }> = {};
+  for (const r of rows) out[r.slug] = { likes: r.likes, supers: r.supers };
+  return out;
 }

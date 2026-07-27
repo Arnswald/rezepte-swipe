@@ -8,7 +8,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { upsertVerdict, deleteVerdict, type Verdict } from "@/lib/db";
+import { upsertVerdict, deleteVerdict, ensureGuest, type Verdict } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -27,6 +27,9 @@ export async function POST(req: Request) {
     if (!guestId || !name || !slug) {
       return NextResponse.json({ error: "guestId, name und slug sind Pflicht" }, { status: 400 });
     }
+
+    // Gast (mit Freundescode) anlegen/aktualisieren — so ist jede:r auffindbar zum Verbinden.
+    ensureGuest(guestId, name, new Date().toISOString());
 
     // Undo → löschen
     if (b.verdict === null || b.verdict === undefined || b.verdict === "") {

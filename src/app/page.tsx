@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { motion, AnimatePresence, useReducedMotion, useMotionValue, useTransform, animate } from "framer-motion";
 import {
   Loader2, ChevronRight, Clock, Users, Flame,
   LayoutGrid, Layers, X, ExternalLink, AlertCircle, Check,
-  Heart, Star, RotateCcw,
+  Heart, Star, RotateCcw, User, Search, Copy, UserPlus, Sparkles,
 } from "lucide-react";
 
 // Instagram-Glyph (aus lucide entfernt) als inline-SVG
@@ -22,6 +22,7 @@ import { NumberFlow } from "@/components/ui/NumberFlow";
 import { Lens } from "@/components/ui/Lens";
 import { AnimatedInput } from "@/components/ui/AnimatedInput";
 import { useToast } from "@/components/ui/Toast";
+import { ShareButton } from "@/components/ShareButton";
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -99,6 +100,21 @@ const CATEGORY_EMOJI: Record<string, string> = {
   "Snack": "🥨",
   "Salat": "🥗",
 };
+
+// Kürzere Anzeige-Labels für die Filter-Pills (Frontmatter im Vault bleibt unverändert).
+const CATEGORY_LABEL: Record<string, string> = {
+  "Hauptgericht": "Gerichte",
+};
+function catLabel(cat: string): string {
+  return CATEGORY_LABEL[cat] ?? cat;
+}
+
+// Aggregierte Beliebtheits-Zähler (aus /api/recipes/trending) — likes = like+super.
+type TrendCount = { likes: number; supers: number };
+type TrendCounts = Record<string, TrendCount>;
+function trendScore(c?: TrendCount): number {
+  return c ? c.likes + c.supers : 0; // super zählt doppelt (einmal in likes + Bonus)
+}
 
 // Gewünschte Filter-Reihenfolge (alles andere hinten dran, alphabetisch)
 const CATEGORY_ORDER = ["Frühstück", "Hauptgericht", "Dessert"];
@@ -422,13 +438,14 @@ function DeckDone({
 // ── Bento-Grid-Modus ──────────────────────────────────────────
 // Rhythmisches Raster: jede 6er-Gruppe hat 1 grosse Hero-Kachel (2×2).
 
-function RecipeGrid({ recipes, onOpen, verdicts }: { recipes: Recipe[]; onOpen: (r: Recipe) => void; verdicts?: Record<string, Verdict> }) {
+function RecipeGrid({ recipes, onOpen, verdicts, counts }: { recipes: Recipe[]; onOpen: (r: Recipe) => void; verdicts?: Record<string, Verdict>; counts?: TrendCounts }) {
   const isHero = (i: number) => i % 6 === 0;
 
   return (
     <div className="grid grid-cols-2 lg:grid-cols-4 auto-rows-[150px] sm:auto-rows-[180px] gap-3 pt-1">
       {recipes.map((r, i) => {
         const hero = isHero(i);
+        const c = counts?.[r.slug];
         return (
           <motion.button
             key={r.slug}
@@ -440,9 +457,13 @@ function RecipeGrid({ recipes, onOpen, verdicts }: { recipes: Recipe[]; onOpen: 
           >
             <RecipeImage r={r} w={hero ? 800 : 400} className="absolute inset-0 w-full h-full object-cover" />
             <div className="absolute inset-x-0 bottom-0 h-3/5 bg-gradient-to-t from-black/90 via-black/40 to-transparent" />
-            <span className="absolute top-2 left-2 px-2 py-0.5 rounded-full bg-black/55 backdrop-blur-sm text-white text-[10px] font-semibold">
-              {CATEGORY_EMOJI[r.category] ?? "🍽️"}{hero ? ` ${r.category}` : ""}
-            </span>
+            {/* Trending-Badge: wie oft geliked/super-geliked (öffentlich, keine Namen) */}
+            {c && c.likes > 0 && (
+              <span className="absolute top-2 left-2 flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/55 backdrop-blur-sm text-white text-[10px] font-semibold tabular-nums">
+                <Heart className="w-2.5 h-2.5 fill-white" /> {c.likes}
+                {c.supers > 0 && <><Star className="w-2.5 h-2.5 fill-[#ffcf5c] text-[#ffcf5c] ml-0.5" /> {c.supers}</>}
+              </span>
+            )}
             {verdicts?.[r.slug] === "super" && (
               <span className="absolute top-2 right-2 w-6 h-6 rounded-full bg-[#d99a2b] flex items-center justify-center shadow"><Star className="w-3.5 h-3.5 fill-white text-white" /></span>
             )}
@@ -722,6 +743,8 @@ function RecipeDetail({ r, onClose }: { r: Recipe; onClose: () => void }) {
             )
           )}
 
+          <ShareButton slug={r.slug} name={r.name} />
+
           <button
             onClick={onClose}
             className="w-full py-3 rounded-xl bg-surface-elevated border border-border text-text-secondary text-sm font-medium"
@@ -869,6 +892,266 @@ function NameGate({ onDone }: { onDone: (name: string, id: string) => void }) {
   );
 }
 
+// ── Account-Seite (Freundescode, Matches, Favoriten, Vorschlag) ───────────────
+
+interface Connection { guestId: string; name: string; friendCode: string }
+interface MatchRecipeUI { slug: string; recipeName: string; category: string; mine: Verdict; theirs: Verdict; bothSuper: boolean }
+interface MatchGroupUI { partner: Connection; recipes: MatchRecipeUI[] }
+
+function AccountView({
+  guestId, guestName, recipes, verdicts, onOpen, onSuggest,
+}: {
+  guestId: string;
+  guestName: string;
+  recipes: Recipe[];
+  verdicts: Record<string, Verdict>;
+  onOpen: (r: Recipe) => void;
+  onSuggest: () => void;
+}) {
+  const toast = useToast();
+  const [friendCode, setFriendCode] = useState("");
+  const [connections, setConnections] = useState<Connection[]>([]);
+  const [matches, setMatches] = useState<MatchGroupUI[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [code, setCode] = useState("");
+  const [connecting, setConnecting] = useState(false);
+
+  const bySlug = useMemo(() => {
+    const m = new Map<string, Recipe>();
+    for (const r of recipes) m.set(r.slug, r);
+    return m;
+  }, [recipes]);
+
+  const favs = useMemo(
+    () =>
+      Object.entries(verdicts)
+        .filter(([, v]) => v === "like" || v === "super")
+        .map(([slug, v]) => ({ r: bySlug.get(slug), v }))
+        .filter((x): x is { r: Recipe; v: Verdict } => !!x.r),
+    [verdicts, bySlug],
+  );
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch("/api/friends/matches", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ guestId, name: guestName }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setFriendCode(d.friendCode ?? "");
+        setConnections(d.connections ?? []);
+        setMatches(d.matches ?? []);
+      }
+    } catch { /* offline egal */ } finally {
+      setLoading(false);
+    }
+  }, [guestId, guestName]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const copyCode = async () => {
+    try {
+      await navigator.clipboard.writeText(friendCode);
+      toast.success("Kopiert", "Dein Freundescode ist in der Zwischenablage.");
+    } catch { /* ignore */ }
+  };
+
+  const inviteText = () => {
+    const url = typeof window !== "undefined" ? window.location.origin : "";
+    return `Lass uns matchen, welches Gericht es geben soll 🍽️\nMein Freundescode: ${friendCode}\n${url}`;
+  };
+  const invite = async () => {
+    const text = inviteText();
+    if (typeof navigator !== "undefined" && navigator.share) {
+      try { await navigator.share({ title: "Rezepte-Match", text }); return; } catch { /* fallthrough */ }
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      toast.success("Einladung kopiert", "Füg sie z.B. in WhatsApp ein.");
+    } catch { /* ignore */ }
+  };
+
+  const connect = async () => {
+    const c = code.trim();
+    if (!c) return;
+    setConnecting(true);
+    try {
+      const res = await fetch("/api/friends/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ guestId, name: guestName, code: c }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok) {
+        toast.success(d.already ? "Schon verbunden" : "Verbunden! 🎉", `Du und ${d.partner?.name ?? "…"} seid jetzt verknüpft.`);
+        setCode("");
+        load();
+      } else {
+        toast.error("Klappt nicht", d.error ?? "Versuch's nochmal.");
+      }
+    } catch {
+      toast.error("Keine Verbindung", "Versuch's gleich nochmal.");
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6 pb-4">
+      {/* Begrüßung */}
+      <div>
+        <h2 className="text-xl font-extrabold text-text-primary tracking-tight">Hey {guestName} 👋</h2>
+        <p className="text-sm text-text-muted mt-0.5">Dein Account, deine Matches und Favoriten.</p>
+      </div>
+
+      {/* Freundescode */}
+      <div className="rounded-2xl border border-border bg-surface p-4">
+        <p className="text-xs font-semibold text-text-muted uppercase tracking-wide">Dein Freundescode</p>
+        <div className="flex items-center gap-2 mt-2">
+          <div className="flex-1 text-2xl font-extrabold tracking-[0.12em] text-accent tabular-nums select-all">
+            {loading ? "…" : friendCode || "—"}
+          </div>
+          <button
+            onClick={copyCode}
+            disabled={!friendCode}
+            aria-label="Code kopieren"
+            className="w-10 h-10 rounded-xl bg-surface-elevated border border-border flex items-center justify-center text-text-secondary active:scale-95 transition-transform disabled:opacity-40"
+          >
+            <Copy className="w-4 h-4" />
+          </button>
+        </div>
+        <p className="text-[12px] text-text-muted mt-2 leading-relaxed">
+          Teile ihn mit Freund:innen — sobald ihr euch verbindet, seht ihr eure gemeinsamen Lieblingsgerichte.
+        </p>
+        <button
+          onClick={invite}
+          disabled={!friendCode}
+          className="mt-3 w-full py-2.5 rounded-xl bg-accent text-white text-sm font-semibold active:scale-[0.98] transition-transform disabled:opacity-40 flex items-center justify-center gap-2"
+        >
+          <Sparkles className="w-4 h-4" /> Einladen
+        </button>
+      </div>
+
+      {/* Verbinden */}
+      <div className="rounded-2xl border border-border bg-surface p-4">
+        <p className="text-xs font-semibold text-text-muted uppercase tracking-wide flex items-center gap-1.5">
+          <UserPlus className="w-3.5 h-3.5" /> Mit jemandem verbinden
+        </p>
+        <div className="flex items-center gap-2 mt-2.5">
+          <input
+            value={code}
+            onChange={(e) => setCode(e.target.value.toUpperCase())}
+            onKeyDown={(e) => { if (e.key === "Enter") connect(); }}
+            placeholder="Code, z.B. MELI-4K2"
+            inputMode="text"
+            autoCapitalize="characters"
+            className="flex-1 min-w-0 px-3 py-2.5 rounded-xl bg-surface-elevated border border-border text-sm text-text-primary tracking-wider uppercase placeholder:normal-case placeholder:tracking-normal placeholder:text-text-muted focus:outline-none focus:border-accent"
+          />
+          <button
+            onClick={connect}
+            disabled={connecting || !code.trim()}
+            className="shrink-0 px-4 py-2.5 rounded-xl bg-accent text-white text-sm font-semibold active:scale-95 transition-transform disabled:opacity-40 flex items-center gap-1.5"
+          >
+            {connecting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+            Verbinden
+          </button>
+        </div>
+      </div>
+
+      {/* Matches */}
+      <div>
+        <h3 className="text-sm font-bold text-text-primary flex items-center gap-1.5 mb-2">
+          <Heart className="w-4 h-4 text-accent fill-accent" /> Eure Matches
+        </h3>
+        {loading ? (
+          <div className="flex justify-center py-6"><Loader2 className="w-4 h-4 text-text-muted animate-spin" /></div>
+        ) : connections.length === 0 ? (
+          <p className="text-sm text-text-muted bg-surface border border-border rounded-2xl p-4">
+            Noch niemand verbunden. Teile deinen Code oder gib oben einen ein.
+          </p>
+        ) : (
+          <div className="space-y-4">
+            {matches.map((g) => (
+              <div key={g.partner.guestId} className="rounded-2xl border border-border bg-surface p-3.5">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-sm font-semibold text-text-primary">Mit {g.partner.name}</p>
+                  <span className="text-[11px] text-text-muted tabular-nums">{g.recipes.length} Treffer</span>
+                </div>
+                {g.recipes.length === 0 ? (
+                  <p className="text-xs text-text-muted">Noch keine gemeinsamen Favoriten — wischt beide weiter!</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {g.recipes.map((m) => {
+                      const r = bySlug.get(m.slug);
+                      return (
+                        <button
+                          key={m.slug}
+                          onClick={() => { if (r) onOpen(r); }}
+                          className="w-full flex items-center gap-3 p-1.5 rounded-xl text-left active:bg-surface-elevated transition-colors"
+                        >
+                          <div className="w-11 h-11 shrink-0 rounded-lg overflow-hidden bg-surface-elevated">
+                            {r ? <RecipeImage r={r} w={400} className="w-full h-full object-cover" /> : null}
+                          </div>
+                          <span className="flex-1 min-w-0 text-sm font-medium text-text-primary truncate">{m.recipeName || r?.name || m.slug}</span>
+                          {m.bothSuper && (
+                            <span className="shrink-0 flex items-center gap-1 text-[10px] font-bold text-[#d99a2b]">
+                              <Star className="w-3.5 h-3.5 fill-[#d99a2b]" /> beide
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Meine Favoriten */}
+      <div>
+        <h3 className="text-sm font-bold text-text-primary flex items-center gap-1.5 mb-2">
+          <Star className="w-4 h-4 text-[#d99a2b] fill-[#d99a2b]" /> Meine Favoriten
+          {favs.length > 0 && <span className="text-[11px] font-normal text-text-muted tabular-nums">({favs.length})</span>}
+        </h3>
+        {favs.length === 0 ? (
+          <p className="text-sm text-text-muted bg-surface border border-border rounded-2xl p-4">
+            Noch nichts gemerkt. Wisch im Swipe-Tab nach rechts, was dir schmeckt.
+          </p>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+            {favs.map(({ r, v }) => (
+              <button
+                key={r.slug}
+                onClick={() => onOpen(r)}
+                className="relative rounded-xl overflow-hidden aspect-[4/3] bg-surface-elevated text-left active:scale-[0.98] transition-transform"
+              >
+                <RecipeImage r={r} w={400} className="absolute inset-0 w-full h-full object-cover" />
+                <div className="absolute inset-x-0 bottom-0 h-3/5 bg-gradient-to-t from-black/85 to-transparent" />
+                {v === "super" && (
+                  <span className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-[#d99a2b] flex items-center justify-center"><Star className="w-3 h-3 fill-white text-white" /></span>
+                )}
+                <p className="absolute inset-x-0 bottom-0 p-2 text-white text-[11px] font-semibold leading-tight line-clamp-2 drop-shadow">{r.name}</p>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Vorschlag */}
+      <button
+        onClick={onSuggest}
+        className="w-full py-3 rounded-xl bg-surface-elevated border border-border text-text-secondary text-sm font-semibold active:scale-[0.98] transition-transform"
+      >
+        + Rezept vorschlagen
+      </button>
+    </div>
+  );
+}
+
 // ── Seite ─────────────────────────────────────────────────────
 
 export default function RezeptePage() {
@@ -877,7 +1160,7 @@ export default function RezeptePage() {
   const [diag, setDiag] = useState<Diagnostics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [mode, setMode] = useState<"swipe" | "grid">("swipe");
+  const [mode, setMode] = useState<"swipe" | "grid" | "account">("swipe");
   const [activeCat, setActiveCat] = useState("Alle");
   const [index, setIndex] = useState(0);
   const [detail, setDetail] = useState<Recipe | null>(null);
@@ -887,6 +1170,11 @@ export default function RezeptePage() {
   const [guestName, setGuestName] = useState<string | null>(null);
   const [guestId, setGuestId] = useState<string>("");
   const [hydrated, setHydrated] = useState(false);
+  const [counts, setCounts] = useState<TrendCounts>({});
+  const [search, setSearch] = useState("");
+  const [searchDimmed, setSearchDimmed] = useState(false);
+  const dimTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const deepLinkDone = useRef(false);
 
   useEffect(() => {
     setVerdicts(loadVerdicts());
@@ -943,6 +1231,53 @@ export default function RezeptePage() {
 
   useEffect(() => { setIndex(0); }, [activeCat]);
 
+  // Trending-Zähler laden, wenn das Raster geöffnet wird (frisch bei jedem Wechsel).
+  useEffect(() => {
+    if (mode !== "grid") return;
+    fetch("/api/recipes/trending", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => setCounts(d.counts ?? {}))
+      .catch(() => { /* egal — dann eben ohne Badges */ });
+  }, [mode]);
+
+  // Geteilter Link `/?rezept=slug` → Detail direkt öffnen (einmalig, sobald Rezepte da sind).
+  useEffect(() => {
+    if (deepLinkDone.current || recipes.length === 0) return;
+    deepLinkDone.current = true;
+    try {
+      const slug = new URLSearchParams(window.location.search).get("rezept");
+      if (slug) {
+        const r = recipes.find((x) => x.slug.toLowerCase() === slug.toLowerCase());
+        if (r) setDetail(r);
+        window.history.replaceState(null, "", window.location.pathname);
+      }
+    } catch { /* ignore */ }
+  }, [recipes]);
+
+  // Raster-Liste: Kategorie-Filter + Suche + Sortierung nach Beliebtheit.
+  const gridRecipes = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    let list = filtered;
+    if (q) {
+      list = list.filter(
+        (r) =>
+          r.name.toLowerCase().includes(q) ||
+          r.description.toLowerCase().includes(q) ||
+          r.category.toLowerCase().includes(q),
+      );
+    }
+    return [...list].sort(
+      (a, b) => trendScore(counts[b.slug]) - trendScore(counts[a.slug]) || b.created.localeCompare(a.created),
+    );
+  }, [filtered, search, counts]);
+
+  // Suchfeld beim Scrollen dezent ausblenden, kurz nach Stillstand wieder einblenden.
+  const onGridScroll = useCallback(() => {
+    setSearchDimmed(true);
+    if (dimTimer.current) clearTimeout(dimTimer.current);
+    dimTimer.current = setTimeout(() => setSearchDimmed(false), 550);
+  }, []);
+
   // Vorausladen: die nächsten Karten-Bilder schon holen, damit Wischen instant wirkt.
   useEffect(() => {
     if (mode !== "swipe" || filtered.length === 0) return;
@@ -964,38 +1299,32 @@ export default function RezeptePage() {
 
   return (
     <div className="mx-auto w-full max-w-3xl h-[100dvh] flex flex-col px-4 pt-[max(env(safe-area-inset-top),0.75rem)] pb-[max(env(safe-area-inset-bottom),1.75rem)]">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-2 shrink-0">
-        <h1 className="text-[1.6rem] font-extrabold text-text-primary tracking-tight leading-none">Rezepte</h1>
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={() => setSuggestOpen(true)}
-            className="flex items-center gap-1 px-3 py-2 rounded-full bg-accent text-white text-xs font-semibold active:scale-95 transition-transform whitespace-nowrap"
-          >
-            + Vorschlag
-          </button>
-          <div className="flex items-center rounded-full bg-surface-elevated p-1 gap-0.5 border border-border">
-            {([
-              ["swipe", Layers, "Swipe"],
-              ["grid", LayoutGrid, "Raster"],
-            ] as const).map(([m, Icon, label]) => (
-              <button
-                key={m}
-                onClick={() => setMode(m)}
-                aria-label={label}
-                className={`px-3 py-1.5 rounded-full transition-colors ${
-                  mode === m ? "bg-surface text-text-primary shadow-sm" : "text-text-muted"
-                }`}
-              >
-                <Icon className="w-4 h-4" />
-              </button>
-            ))}
-          </div>
+      {/* Header — Titel links, 3-Tab-Switcher mittig */}
+      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 shrink-0">
+        <h1 className="justify-self-start text-[1.5rem] font-extrabold text-text-primary tracking-tight leading-none">Rezepte</h1>
+        <div className="justify-self-center flex items-center rounded-full bg-surface-elevated p-1 gap-0.5 border border-border">
+          {([
+            ["swipe", Layers, "Swipe"],
+            ["grid", LayoutGrid, "Raster"],
+            ["account", User, "Account"],
+          ] as const).map(([m, Icon, label]) => (
+            <button
+              key={m}
+              onClick={() => setMode(m)}
+              aria-label={label}
+              className={`px-3.5 py-1.5 rounded-full transition-colors ${
+                mode === m ? "bg-surface text-text-primary shadow-sm" : "text-text-muted"
+              }`}
+            >
+              <Icon className="w-4 h-4" />
+            </button>
+          ))}
         </div>
+        <div className="justify-self-end" />
       </div>
 
-      {/* Kategorie-Filter — eine Reihe, bei Bedarf horizontal scrollbar */}
-      {categories.length > 0 && (
+      {/* Kategorie-Filter — eine Reihe, bei Bedarf horizontal scrollbar (nicht im Account) */}
+      {mode !== "account" && categories.length > 0 && (
         <div className="flex flex-nowrap items-center gap-1.5 shrink-0 mt-3 overflow-x-auto scrollbar-none -mx-4 px-4">
           {["Alle", ...orderCategories(categories)].map((cat) => {
             const active = activeCat === cat;
@@ -1015,7 +1344,7 @@ export default function RezeptePage() {
                   />
                 )}
                 <span className="relative z-10">
-                  {cat === "Alle" ? "Alle" : `${CATEGORY_EMOJI[cat] ?? ""} ${cat}`}
+                  {cat === "Alle" ? "Alle" : `${CATEGORY_EMOJI[cat] ?? ""} ${catLabel(cat)}`}
                 </span>
               </button>
             );
@@ -1024,7 +1353,10 @@ export default function RezeptePage() {
       )}
 
       {/* Inhalt */}
-      <div className={showDeck ? "flex-1 min-h-0 flex flex-col mt-3" : "flex-1 min-h-0 overflow-y-auto overflow-x-hidden mt-3"}>
+      <div
+        onScroll={mode === "grid" ? onGridScroll : undefined}
+        className={showDeck ? "flex-1 min-h-0 flex flex-col mt-3" : "flex-1 min-h-0 overflow-y-auto overflow-x-hidden mt-3"}
+      >
         {loading ? (
           <div className="flex justify-center py-20">
             <Loader2 className="w-5 h-5 text-text-muted animate-spin" />
@@ -1046,8 +1378,17 @@ export default function RezeptePage() {
               Prüfe, ob der Rezept-Ordner gemountet ist (Env <code className="bg-surface-elevated px-1 rounded">OBSIDIAN_RECIPES_PATH</code>).
             </p>
           </div>
-        ) : filtered.length > 0 ? (
-          mode === "swipe" ? (
+        ) : mode === "account" ? (
+          <AccountView
+            guestId={guestId}
+            guestName={guestName ?? ""}
+            recipes={recipes}
+            verdicts={verdicts}
+            onOpen={setDetail}
+            onSuggest={() => setSuggestOpen(true)}
+          />
+        ) : mode === "swipe" ? (
+          filtered.length > 0 ? (
             index < filtered.length ? (
               <SwipeDeck
                 recipes={filtered}
@@ -1063,18 +1404,45 @@ export default function RezeptePage() {
                 likeCount={likeCount}
                 superCount={superCount}
                 onRestart={() => setIndex(0)}
-                onShowFavs={() => { setActiveCat("Alle"); setMode("grid"); }}
+                onShowFavs={() => setMode("account")}
               />
             )
           ) : (
-            <RecipeGrid recipes={filtered} onOpen={setDetail} verdicts={verdicts} />
+            <p className="text-center text-sm text-text-muted py-12">
+              Keine Rezepte in dieser Kategorie
+            </p>
           )
+        ) : gridRecipes.length > 0 ? (
+          <>
+            <RecipeGrid recipes={gridRecipes} onOpen={setDetail} verdicts={verdicts} counts={counts} />
+            <div className="h-24 shrink-0" />
+          </>
         ) : (
           <p className="text-center text-sm text-text-muted py-12">
-            Keine Rezepte in dieser Kategorie
+            {search.trim() ? `Nichts gefunden für „${search.trim()}"` : "Keine Rezepte in dieser Kategorie"}
           </p>
         )}
       </div>
+
+      {/* Schwebende Suche — nur im Raster, fadet beim Scrollen */}
+      {mode === "grid" && recipes.length > 0 && (
+        <div className={`fixed left-1/2 -translate-x-1/2 bottom-[max(env(safe-area-inset-bottom),1rem)] z-40 w-[min(92%,28rem)] transition-opacity duration-300 ${searchDimmed ? "opacity-40" : "opacity-100"}`}>
+          <div className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-surface/90 backdrop-blur-md border border-border shadow-lg">
+            <Search className="w-4 h-4 text-text-muted shrink-0" />
+            <input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Rezept suchen…"
+              className="flex-1 min-w-0 bg-transparent text-sm text-text-primary placeholder:text-text-muted focus:outline-none"
+            />
+            {search && (
+              <button onClick={() => setSearch("")} aria-label="Suche leeren" className="shrink-0 text-text-muted active:scale-90 transition-transform">
+                <X className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Detail-Sheet */}
       <AnimatePresence>
