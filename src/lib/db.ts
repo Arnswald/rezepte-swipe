@@ -305,6 +305,7 @@ export interface AdminPerson {
   nopes: number;
   total: number;
   connections: number;
+  connectedTo: { guestId: string; name: string }[];
   liked: string[];
   lastActive: string | null;
   createdAt: string | null;
@@ -326,7 +327,7 @@ export function getAdminPersons(): AdminPerson[] {
   const ensure = (id: string, name: string): AdminPerson => {
     let p = map.get(id);
     if (!p) {
-      p = { guestId: id, name: name || "Gast", friendCode: null, likes: 0, supers: 0, nopes: 0, total: 0, connections: 0, liked: [], lastActive: null, createdAt: null };
+      p = { guestId: id, name: name || "Gast", friendCode: null, likes: 0, supers: 0, nopes: 0, total: 0, connections: 0, connectedTo: [], liked: [], lastActive: null, createdAt: null };
       map.set(id, p);
     }
     return p;
@@ -348,16 +349,40 @@ export function getAdminPersons(): AdminPerson[] {
     if (v.verdict === "like" || v.verdict === "super") p.liked.push(v.recipe_name || v.slug);
     if (!p.lastActive || v.updated_at > p.lastActive) p.lastActive = v.updated_at;
   }
-  const connCount = new Map<string, number>();
   for (const c of conns) {
-    connCount.set(c.guest_a, (connCount.get(c.guest_a) ?? 0) + 1);
-    connCount.set(c.guest_b, (connCount.get(c.guest_b) ?? 0) + 1);
+    const pa = map.get(c.guest_a);
+    const pb = map.get(c.guest_b);
+    if (pa && pb) {
+      pa.connectedTo.push({ guestId: pb.guestId, name: pb.name });
+      pb.connectedTo.push({ guestId: pa.guestId, name: pa.name });
+    } else {
+      // Verbindung zu jemandem ohne Personen-Eintrag (selten) — nur der bekannten Seite zählen
+      if (pa) pa.connectedTo.push({ guestId: c.guest_b, name: "?" });
+      if (pb) pb.connectedTo.push({ guestId: c.guest_a, name: "?" });
+    }
   }
-  for (const [id, p] of map) p.connections = connCount.get(id) ?? 0;
+  for (const p of map.values()) p.connections = p.connectedTo.length;
 
   return [...map.values()].sort(
     (a, b) => (b.lastActive ?? "").localeCompare(a.lastActive ?? "") || (b.createdAt ?? "").localeCompare(a.createdAt ?? ""),
   );
+}
+
+/** Admin: verbindet zwei Personen direkt (per guestId, ohne Code). Paar normalisiert. */
+export function adminConnect(a: string, b: string, now: string): { ok: boolean; already: boolean; reason?: "self" } {
+  if (a === b) return { ok: false, already: false, reason: "self" };
+  const db = getDb();
+  const [x, y] = pair(a, b);
+  const had = db.prepare(`SELECT 1 FROM connections WHERE guest_a = ? AND guest_b = ?`).get(x, y);
+  if (!had) db.prepare(`INSERT INTO connections (guest_a, guest_b, created_at) VALUES (?, ?, ?)`).run(x, y, now);
+  return { ok: true, already: !!had };
+}
+
+/** Admin: trennt eine Verbindung zwischen zwei Personen. */
+export function adminDisconnect(a: string, b: string): { removed: number } {
+  const [x, y] = pair(a, b);
+  const removed = getDb().prepare(`DELETE FROM connections WHERE guest_a = ? AND guest_b = ?`).run(x, y).changes;
+  return { removed };
 }
 
 /** Löscht eine Person vollständig: ihre Verdicts, alle ihre Verbindungen und den Gast selbst. */

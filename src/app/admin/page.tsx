@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
-import { Loader2, RefreshCw, LogOut, Heart, Star, X, ChevronDown, Lock, Trash2 } from "lucide-react";
+import { Loader2, RefreshCw, LogOut, Heart, Star, X, ChevronDown, Lock, Trash2, Copy, Link2, Plus } from "lucide-react";
 import { AnimatedInput } from "@/components/ui/AnimatedInput";
 
 // ── Types (Spiegel der Stats-API) ─────────────────────────────
@@ -19,7 +19,8 @@ interface Stats {
 interface AdminPerson {
   guestId: string; name: string; friendCode: string | null;
   likes: number; supers: number; nopes: number; total: number;
-  connections: number; liked: string[]; lastActive: string | null; createdAt: string | null;
+  connections: number; connectedTo: { guestId: string; name: string }[];
+  liked: string[]; lastActive: string | null; createdAt: string | null;
 }
 
 const PIN_KEY = "rezepte-admin-pin";
@@ -75,6 +76,16 @@ export default function AdminPage() {
       method: "DELETE",
       headers: { "x-admin-pin": pin, "Content-Type": "application/json" },
       body: JSON.stringify({ guestId }),
+    });
+    if (res.ok) await load(pin);
+  }, [pin, load]);
+
+  // Zwei Personen verbinden / trennen (Admin), danach neu laden
+  const setConnection = useCallback(async (a: string, b: string, connect: boolean) => {
+    const res = await fetch("/api/admin/connections", {
+      method: connect ? "POST" : "DELETE",
+      headers: { "x-admin-pin": pin, "Content-Type": "application/json" },
+      body: JSON.stringify({ a, b }),
     });
     if (res.ok) await load(pin);
   }, [pin, load]);
@@ -190,7 +201,9 @@ export default function AdminPage() {
                 Personen <span className="normal-case text-text-muted/60">({persons.length})</span>
               </h2>
               <div className="space-y-2">
-                {persons.map((p) => <PersonAdminRow key={p.guestId} p={p} onDelete={deletePerson} />)}
+                {persons.map((p) => (
+                  <PersonAdminRow key={p.guestId} p={p} allPersons={persons} onDelete={deletePerson} onConnect={setConnection} />
+                ))}
               </div>
             </section>
           )}
@@ -220,15 +233,43 @@ export default function AdminPage() {
   );
 }
 
-// Einzelne Person (aufklappbar + löschbar). Löschen ist zweistufig (Bestätigung inline).
-function PersonAdminRow({ p, onDelete }: { p: AdminPerson; onDelete: (guestId: string) => Promise<void> }) {
+// Einzelne Person (aufklappbar). Löschen (zweistufig) + Verbindungen verwalten.
+function PersonAdminRow({
+  p, allPersons, onDelete, onConnect,
+}: {
+  p: AdminPerson;
+  allPersons: AdminPerson[];
+  onDelete: (guestId: string) => Promise<void>;
+  onConnect: (a: string, b: string, connect: boolean) => Promise<void>;
+}) {
   const [open, setOpen] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [picking, setPicking] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [busy, setBusy] = useState(false);
 
   const del = async () => {
     setDeleting(true);
     try { await onDelete(p.guestId); } finally { setDeleting(false); }
+  };
+
+  const copyCode = async () => {
+    if (!p.friendCode) return;
+    try { await navigator.clipboard.writeText(p.friendCode); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* ignore */ }
+  };
+
+  // Kandidaten zum Verbinden: andere Personen mit Code, noch nicht verbunden
+  const connectedIds = new Set(p.connectedTo.map((c) => c.guestId));
+  const candidates = allPersons.filter((o) => o.guestId !== p.guestId && o.friendCode && !connectedIds.has(o.guestId));
+
+  const connect = async (otherId: string) => {
+    setBusy(true);
+    try { await onConnect(p.guestId, otherId, true); setPicking(false); } finally { setBusy(false); }
+  };
+  const disconnect = async (otherId: string) => {
+    setBusy(true);
+    try { await onConnect(p.guestId, otherId, false); } finally { setBusy(false); }
   };
 
   return (
@@ -239,14 +280,16 @@ function PersonAdminRow({ p, onDelete }: { p: AdminPerson; onDelete: (guestId: s
             {p.name.slice(0, 1).toUpperCase()}
           </div>
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-semibold text-text-primary truncate">
-              {p.name}
-              {p.friendCode && <span className="ml-2 text-[10px] font-mono text-text-muted">{p.friendCode}</span>}
-            </p>
+            <p className="text-sm font-semibold text-text-primary truncate">{p.name}</p>
             <p className="text-[11px] text-text-muted tabular-nums">
               {p.likes + p.supers} mögen · {p.nopes} nö · {p.connections} verbunden
             </p>
           </div>
+          {p.friendCode && (
+            <span className="shrink-0 text-[11px] font-mono font-semibold text-accent bg-accent/10 border border-accent/15 rounded-md px-1.5 py-0.5">
+              {p.friendCode}
+            </span>
+          )}
           <ChevronDown className={`w-4 h-4 text-text-muted shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
         </button>
         {!confirm ? (
@@ -277,18 +320,70 @@ function PersonAdminRow({ p, onDelete }: { p: AdminPerson; onDelete: (guestId: s
         )}
       </div>
       {open && (
-        <div className="px-4 pb-3 -mt-1 space-y-2">
+        <div className="px-4 pb-3 -mt-1 space-y-3">
+          {/* Code kopieren */}
+          {p.friendCode && (
+            <button
+              onClick={copyCode}
+              className="inline-flex items-center gap-1.5 text-[11px] font-mono font-semibold text-text-secondary bg-surface-elevated border border-border rounded-md px-2 py-1 active:scale-95 transition-transform"
+            >
+              {copied ? "Kopiert ✓" : <><Copy className="w-3 h-3" /> {p.friendCode}</>}
+            </button>
+          )}
+
+          {/* Verbindungen verwalten */}
+          <div>
+            <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wide mb-1.5 flex items-center gap-1">
+              <Link2 className="w-3 h-3" /> Verbunden mit
+            </p>
+            {p.connectedTo.length > 0 ? (
+              <div className="flex flex-wrap gap-1.5">
+                {p.connectedTo.map((c) => (
+                  <span key={c.guestId} className="inline-flex items-center gap-1 pl-2.5 pr-1 py-1 rounded-full text-[11px] font-medium bg-accent/10 text-accent border border-accent/15">
+                    {c.name}
+                    <button onClick={() => disconnect(c.guestId)} disabled={busy} aria-label="Verbindung trennen" className="w-4 h-4 rounded-full hover:bg-[#bd5138]/15 hover:text-[#bd5138] flex items-center justify-center">
+                      <X className="w-3 h-3" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-text-muted">Noch mit niemandem verbunden.</p>
+            )}
+
+            {!picking ? (
+              candidates.length > 0 && (
+                <button onClick={() => setPicking(true)} className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-accent">
+                  <Plus className="w-3.5 h-3.5" /> verbinden
+                </button>
+              )
+            ) : (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {candidates.map((o) => (
+                  <button
+                    key={o.guestId}
+                    onClick={() => connect(o.guestId)}
+                    disabled={busy}
+                    className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] bg-surface-elevated border border-border text-text-secondary active:scale-95 transition-transform disabled:opacity-50"
+                  >
+                    {o.name} <span className="font-mono text-text-muted">{o.friendCode}</span>
+                  </button>
+                ))}
+                <button onClick={() => setPicking(false)} className="px-2 py-1 text-[11px] text-text-muted">Abbr.</button>
+              </div>
+            )}
+          </div>
+
+          {/* Zusatz-Infos + Favoriten */}
           <p className="text-[11px] text-text-muted tabular-nums">
             {p.total} Bewertungen{p.lastActive ? ` · zuletzt ${fmtTime(p.lastActive)}` : ""}
           </p>
-          {p.liked.length > 0 ? (
+          {p.liked.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
               {p.liked.map((r, i) => (
                 <span key={i} className="px-2.5 py-1 rounded-full text-[11px] font-medium bg-[#3f6b43]/10 text-[#3f6b43] border border-[#3f6b43]/15">{r}</span>
               ))}
             </div>
-          ) : (
-            <p className="text-xs text-text-muted">Noch nichts gemocht.</p>
           )}
         </div>
       )}

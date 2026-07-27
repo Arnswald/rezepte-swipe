@@ -190,6 +190,7 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
 | `src/app/api/friends/matches/route.ts` | POST: Verbindungen + Matches („beide mögen es") |
 | `src/app/api/admin/stats/route.ts` | GET (x-admin-pin): aggregierte Auswertung |
 | `src/app/api/admin/persons/route.ts` | GET/DELETE (x-admin-pin): Personen listen + löschen (kaskadiert Verdicts+Verbindungen) |
+| `src/app/api/admin/connections/route.ts` | POST/DELETE (x-admin-pin): zwei Personen verbinden/trennen |
 | `src/app/api/recipes/route.ts` | GET: alle Rezepte + Kategorien |
 | `src/app/api/recipes/trending/route.ts` | GET: öffentliche Beliebtheits-Zähler (keine Namen) |
 | `src/app/api/recipes/image/[name]/route.ts` | Bild → WebP, Disk-Cache |
