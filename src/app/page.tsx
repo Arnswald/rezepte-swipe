@@ -100,6 +100,15 @@ const CATEGORY_EMOJI: Record<string, string> = {
   "Salat": "🥗",
 };
 
+// Gewünschte Filter-Reihenfolge (alles andere hinten dran, alphabetisch)
+const CATEGORY_ORDER = ["Frühstück", "Hauptgericht", "Dessert"];
+function orderCategories(cats: string[]): string[] {
+  return [...cats].sort((a, b) => {
+    const ia = CATEGORY_ORDER.indexOf(a); const ib = CATEGORY_ORDER.indexOf(b);
+    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib) || a.localeCompare(b);
+  });
+}
+
 function imageUrl(image: string | null, w: 400 | 800 | 1200): string | null {
   if (!image) return null;
   return `/api/recipes/image/${encodeURIComponent(image)}?w=${w}`;
@@ -985,16 +994,16 @@ export default function RezeptePage() {
         </div>
       </div>
 
-      {/* Kategorie-Filter */}
+      {/* Kategorie-Filter — eine Reihe, bei Bedarf horizontal scrollbar */}
       {categories.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5 shrink-0 mt-3">
-          {["Alle", ...categories].map((cat) => {
+        <div className="flex flex-nowrap items-center gap-1.5 shrink-0 mt-3 overflow-x-auto scrollbar-none -mx-4 px-4">
+          {["Alle", ...orderCategories(categories)].map((cat) => {
             const active = activeCat === cat;
             return (
               <button
                 key={cat}
                 onClick={() => setActiveCat(cat)}
-                className={`relative px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
+                className={`relative shrink-0 whitespace-nowrap px-2.5 py-1.5 rounded-full text-xs font-medium border transition-colors ${
                   active ? "text-white border-accent" : "bg-surface border-border text-text-muted hover:text-text-secondary"
                 }`}
               >
