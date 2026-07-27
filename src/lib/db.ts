@@ -245,6 +245,39 @@ export function getMatches(guestId: string): MatchGroup[] {
   return groups;
 }
 
+/** Ein frisch entstandenes Match beim Swipen (für die „Es ist ein Match!"-Animation). */
+export interface MatchPing {
+  name: string;
+  theirs: Verdict;
+  bothSuper: boolean;
+}
+
+/**
+ * Prüft, ob mein gerade gesetztes Verdict (`myVerdict`) auf `slug` ein Match mit
+ * verbundenen Freund:innen ergibt — also ob jemand, mit dem ich verbunden bin,
+ * dasselbe Gericht auch mag (like/super). Gibt diese Partner zurück.
+ * Nur relevant für like/super (Rechts-/Hoch-Swipe).
+ */
+export function getMatchPartnersForSlug(guestId: string, slug: string, myVerdict: Verdict): MatchPing[] {
+  if (myVerdict !== "like" && myVerdict !== "super") return [];
+  const partners = getConnections(guestId);
+  if (partners.length === 0) return [];
+  const ids = partners.map((p) => p.guest_id);
+  const placeholders = ids.map(() => "?").join(",");
+  const rows = getDb()
+    .prepare(
+      `SELECT guest_id, verdict FROM verdicts
+       WHERE slug = ? AND verdict IN ('like','super') AND guest_id IN (${placeholders})`,
+    )
+    .all(slug, ...ids) as { guest_id: string; verdict: Verdict }[];
+  const nameById = new Map(partners.map((p) => [p.guest_id, p.name]));
+  return rows.map((r) => ({
+    name: nameById.get(r.guest_id) ?? "Freund:in",
+    theirs: r.verdict,
+    bothSuper: myVerdict === "super" && r.verdict === "super",
+  }));
+}
+
 /** Öffentliche Aggregat-Zähler pro Gericht (KEINE Namen): likes = like+super, supers = super. */
 export function getTrendingCounts(): Record<string, { likes: number; supers: number }> {
   const rows = getDb()

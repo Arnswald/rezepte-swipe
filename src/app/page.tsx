@@ -69,17 +69,26 @@ function saveVerdict(slug: string, v: Verdict | null) {
   } catch { /* ignore */ }
 }
 
-// Verdict ans Backend schicken (fire-and-forget — UI hängt nicht davon ab)
-function postVerdict(body: {
+// Frisch entstandenes Match (für die „Es ist ein Match!"-Animation)
+interface MatchPing { name: string; theirs: Verdict; bothSuper: boolean }
+
+// Verdict ans Backend schicken. Gibt die Antwort zurück (u.a. frische Matches);
+// bleibt aber unkritisch — die UI hängt nicht davon ab.
+async function postVerdict(body: {
   guestId: string; name: string; slug: string;
   recipeName?: string; category?: string; verdict: Verdict | null;
-}) {
-  fetch("/api/verdict", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    keepalive: true,
-  }).catch(() => { /* offline egal — localStorage bleibt Quelle der Wahrheit für die UI */ });
+}): Promise<{ ok?: boolean; matches?: MatchPing[] } | null> {
+  try {
+    const res = await fetch("/api/verdict", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      keepalive: true,
+    });
+    return await res.json();
+  } catch {
+    return null; // offline egal — localStorage bleibt Quelle der Wahrheit für die UI
+  }
 }
 
 interface Diagnostics {
@@ -363,7 +372,7 @@ function SwipeDeck({
       </div>
 
       {/* Action-Buttons — Swipe-for-Dinner-Stil, fix unter dem Deck */}
-      <div className="shrink-0 flex items-center justify-center gap-4 pt-3">
+      <div className="shrink-0 flex items-center justify-center gap-4 pt-5">
         <button
           onClick={() => commit("nope")}
           aria-label="Nö"
@@ -892,6 +901,91 @@ function NameGate({ onDone }: { onDone: (name: string, id: string) => void }) {
   );
 }
 
+// ── Match-Animation ("Es ist ein Match!") ─────────────────────────────────────
+// Feuert, wenn man rechts/hoch auf ein Gericht swipt, das ein:e verbundene:r
+// Freund:in schon mag. Vollbild-Overlay mit schwebenden Herzen.
+
+function MatchCelebration({
+  match, onClose,
+}: {
+  match: { recipe: Recipe; partners: MatchPing[] };
+  onClose: () => void;
+}) {
+  const prefersReduced = useReducedMotion();
+  const { recipe, partners } = match;
+  const names = partners.map((p) => p.name);
+  const nameStr = names.length <= 1
+    ? (names[0] ?? "jemand")
+    : `${names.slice(0, -1).join(", ")} & ${names[names.length - 1]}`;
+  const anySuper = partners.some((p) => p.bothSuper);
+
+  useEffect(() => {
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = ""; };
+  }, []);
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-6" onClick={onClose}>
+      <motion.div
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        className="absolute inset-0"
+        style={{ background: "radial-gradient(125% 125% at 50% 12%, rgba(189,81,56,0.97), rgba(63,107,67,0.97))" }}
+      />
+
+      {/* Schwebende Herzen */}
+      {!prefersReduced && [...Array(9)].map((_, i) => (
+        <motion.div
+          key={i}
+          className="absolute pointer-events-none"
+          style={{ left: `${6 + i * 10.5}%`, bottom: "-8%" }}
+          initial={{ y: 0, opacity: 0 }}
+          animate={{ y: -820 - (i % 3) * 120, opacity: [0, 1, 1, 0] }}
+          transition={{ duration: 2.6 + (i % 4) * 0.4, delay: 0.12 * i, repeat: Infinity, ease: "easeOut" }}
+        >
+          <Heart className="w-6 h-6 text-white/70 fill-white/70" />
+        </motion.div>
+      ))}
+
+      <motion.div
+        initial={{ scale: prefersReduced ? 1 : 0.7, opacity: 0, y: prefersReduced ? 0 : 20 }}
+        animate={{ scale: 1, opacity: 1, y: 0 }}
+        exit={{ scale: 0.9, opacity: 0 }}
+        transition={prefersReduced ? { duration: 0 } : { type: "spring", damping: 18, stiffness: 240 }}
+        className="relative z-10 w-full max-w-sm text-center"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <motion.p
+          initial={{ scale: prefersReduced ? 1 : 0.5, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={prefersReduced ? { duration: 0 } : { delay: 0.15, type: "spring", damping: 12, stiffness: 260 }}
+          className="text-white text-[2.4rem] leading-none font-black tracking-tight drop-shadow-lg"
+        >
+          Es ist ein Match!
+        </motion.p>
+        <p className="text-white/90 text-sm mt-3 font-semibold">
+          {anySuper ? "⭐ Doppel-Superlike" : "❤️ Ihr mögt beide"}
+        </p>
+
+        <div className="mt-6 mx-auto w-44 h-44 rounded-[28px] overflow-hidden shadow-2xl ring-4 ring-white/30 bg-black/20">
+          <RecipeImage r={recipe} w={800} className="w-full h-full object-cover" />
+        </div>
+
+        <h3 className="text-white text-xl font-extrabold mt-4 leading-tight">{recipe.name}</h3>
+        <p className="text-white/85 text-sm mt-1">
+          Du und <span className="font-bold">{nameStr}</span> — das könnte was werden 🍽️
+        </p>
+
+        <button
+          onClick={onClose}
+          className="mt-7 w-full py-3 rounded-xl bg-white text-[#bd5138] text-sm font-bold active:scale-[0.98] transition-transform"
+        >
+          Weiter swipen
+        </button>
+      </motion.div>
+    </div>
+  );
+}
+
 // ── Account-Seite (Freundescode, Matches, Favoriten, Vorschlag) ───────────────
 
 interface Connection { guestId: string; name: string; friendCode: string }
@@ -1173,6 +1267,7 @@ export default function RezeptePage() {
   const [counts, setCounts] = useState<TrendCounts>({});
   const [search, setSearch] = useState("");
   const [searchDimmed, setSearchDimmed] = useState(false);
+  const [match, setMatch] = useState<{ recipe: Recipe; partners: MatchPing[] } | null>(null);
   const dimTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const deepLinkDone = useRef(false);
 
@@ -1192,7 +1287,13 @@ export default function RezeptePage() {
     setVerdicts((prev) => ({ ...prev, [r.slug]: v }));
     setHistory((prev) => [...prev, r.slug]);
     if (guestId && guestName) {
-      postVerdict({ guestId, name: guestName, slug: r.slug, recipeName: r.name, category: r.category, verdict: v });
+      postVerdict({ guestId, name: guestName, slug: r.slug, recipeName: r.name, category: r.category, verdict: v })
+        .then((res) => {
+          // Rechts/Hoch auf ein Gericht, das ein:e Freund:in schon mag → Match-Animation
+          if ((v === "like" || v === "super") && res?.matches?.length) {
+            setMatch({ recipe: r, partners: res.matches });
+          }
+        });
     }
   }, [guestId, guestName]);
 
@@ -1323,23 +1424,23 @@ export default function RezeptePage() {
         <div className="justify-self-end" />
       </div>
 
-      {/* Kategorie-Filter — eine Reihe, bei Bedarf horizontal scrollbar (nicht im Account) */}
+      {/* Kategorie-Filter — dezent, eine Reihe, bei Bedarf horizontal scrollbar (nicht im Account) */}
       {mode !== "account" && categories.length > 0 && (
-        <div className="flex flex-nowrap items-center gap-1.5 shrink-0 mt-3 overflow-x-auto scrollbar-none -mx-4 px-4">
+        <div className="flex flex-nowrap items-center gap-1.5 shrink-0 mt-4 overflow-x-auto scrollbar-none -mx-4 px-4">
           {["Alle", ...orderCategories(categories)].map((cat) => {
             const active = activeCat === cat;
             return (
               <button
                 key={cat}
                 onClick={() => setActiveCat(cat)}
-                className={`relative shrink-0 whitespace-nowrap px-2.5 py-1.5 rounded-full text-xs font-medium border transition-colors ${
-                  active ? "text-white border-accent" : "bg-surface border-border text-text-muted hover:text-text-secondary"
+                className={`relative shrink-0 whitespace-nowrap px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors ${
+                  active ? "text-white border-transparent" : "bg-transparent border-border/50 text-text-muted/70 hover:text-text-secondary"
                 }`}
               >
                 {active && (
                   <motion.span
                     layoutId="cat-pill"
-                    className="absolute inset-0 rounded-full bg-accent"
+                    className="absolute inset-0 rounded-full bg-accent/85"
                     transition={{ type: "spring", stiffness: 380, damping: 32 }}
                   />
                 )}
@@ -1355,7 +1456,7 @@ export default function RezeptePage() {
       {/* Inhalt */}
       <div
         onScroll={mode === "grid" ? onGridScroll : undefined}
-        className={showDeck ? "flex-1 min-h-0 flex flex-col mt-3" : "flex-1 min-h-0 overflow-y-auto overflow-x-hidden mt-3"}
+        className={showDeck ? "flex-1 min-h-0 flex flex-col mt-4" : "flex-1 min-h-0 overflow-y-auto overflow-x-hidden mt-4"}
       >
         {loading ? (
           <div className="flex justify-center py-20">
@@ -1452,6 +1553,11 @@ export default function RezeptePage() {
       {/* Vorschlag einreichen */}
       <AnimatePresence>
         {suggestOpen && <SuggestSheet onClose={() => setSuggestOpen(false)} />}
+      </AnimatePresence>
+
+      {/* Match-Animation */}
+      <AnimatePresence>
+        {match && <MatchCelebration match={match} onClose={() => setMatch(null)} />}
       </AnimatePresence>
     </div>
   );

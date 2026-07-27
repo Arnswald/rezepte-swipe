@@ -8,7 +8,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { upsertVerdict, deleteVerdict, ensureGuest, type Verdict } from "@/lib/db";
+import { upsertVerdict, deleteVerdict, ensureGuest, getMatchPartnersForSlug, type Verdict } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -51,7 +51,9 @@ export async function POST(req: Request) {
       now: new Date().toISOString(),
     });
 
-    return NextResponse.json({ ok: true });
+    // Bei „mögen" (rechts/hoch) prüfen, ob das ein Match mit Freund:innen ist.
+    const matches = getMatchPartnersForSlug(guestId, slug, b.verdict as Verdict);
+    return NextResponse.json({ ok: true, matches });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : String(err) },

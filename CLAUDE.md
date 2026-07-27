@@ -139,7 +139,7 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
 - **v2 (gebaut, 27.07.2026)**: Name-Gate (Pflicht), Verdicts serverseitig (SQLite),
   Admin-Auswertung `/admin` (PIN). Muss auf dem Server noch ausgerollt +
   `ADMIN_PIN` gesetzt werden. ✅ Code / ⏳ Deploy
-- **v3 (im Bau, 27.07.2026): Account & Match.** Grundsatz-Entscheidungen:
+- **v3 (LIVE seit 27.07.2026): Account & Match.** Grundsatz-Entscheidungen:
   - **3-Tab-Navigation** oben zentriert: **Swipe · Raster · Account**. „+ Vorschlag"
     ist aus dem Header raus und lebt jetzt auf der Account-Seite.
   - **Freundescode-Pairing** (KEIN Login): jeder Gast bekommt einen Code mit
@@ -156,8 +156,14 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
     Vault-Frontmatter bleibt `Hauptgericht` — nur `CATEGORY_LABEL`-Map in `page.tsx`.
   - **Teilbare Rezept-Seiten** `/rezept/[slug]` (server-gerendert, OG-Tags → schöne
     WhatsApp-Vorschau). Teilen-Button nutzt `navigator.share`, Fallback WhatsApp/Copy.
-- **v4 (offen): Live-Match-Session** — gemeinsames Swipen in Echtzeit, „Match für
-  heute Abend"-Popup beim gemeinsamen Rechts-Swipe (braucht Realtime/Polling).
+  - **Match-Animation beim Swipen**: Swipt man rechts/hoch auf ein Gericht, das
+    ein:e verbundene:r Freund:in **schon** mag, erscheint ein „Es ist ein Match!"-
+    Overlay (framer-motion). Feuert für die Person, die das Paar komplettiert;
+    der/die andere sieht es in „Eure Matches" (echtes Live-Notify für beide = v4).
+    Backend: `/api/verdict` gibt bei like/super die passenden Partner zurück
+    (`getMatchPartnersForSlug` in `db.ts`).
+- **v4 (offen): Live-Match-Session** — gemeinsames Swipen in Echtzeit, beide Seiten
+  bekommen das „Match für heute Abend"-Popup sofort (braucht Realtime/Polling).
 - **v4 (offen): Richtiger Login** — Code/Magic-Link statt nur localStorage, damit
   Identität **geräteübergreifend** hält und die iOS-Safari-7-Tage-Storage-Löschung
   (greift nur ohne Home-Screen-PWA) umgangen wird. Bewusst zurückgestellt; ggf.
@@ -197,7 +203,15 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
 - **Mobile-first**: Swipe-Ansicht muss ohne Seiten-Scroll auf einen iPhone-Screen
   passen — Karte flext (Foto füllt), Buttons sitzen fix unten. Höhe wird über
   `h-[100dvh]` + Flex gesteuert; wenn's mal klemmt, ist es eine Zahl in `page.tsx`.
-- **Nach jeder Änderung**: `npm run build` grün, dann committen + pushen.
+- **Deploy-Workflow (WICHTIG): jede Änderung geht direkt live.** Nach jeder
+  Änderung: `npm run build` grün → **direkt auf `main` committen UND pushen**, ohne
+  Rückfrage und ohne Feature-Branch. Christian will nicht extra sagen müssen „mach
+  es live" — der Push IST das Live-Schalten. (Push → CI baut Image → Portainer.)
+  - **Voraussetzung für echtes Auto-Deploy:** das Repo-Secret `PORTAINER_WEBHOOK_URL`
+    muss gesetzt sein (Portainer-Stack → Webhooks → URL → GitHub Secret). Ist es
+    **nicht** gesetzt, baut der Push nur das Image — der Container zieht `:latest`
+    erst nach manuellem „Recreate (Re-pull image)" in Portainer. Dann Christian
+    kurz erinnern. Status prüfbar im CI-Log-Step „Trigger Portainer redeploy".
 - Beziehung zum Dashboard: Die Swipe-UI stammt aus `Fokus Dashboard/src/app/rezepte`.
   Diese App ist ab jetzt die **kanonische** Version. Verbesserungen hier machen;
   ins Dashboard nur zurückportieren, wenn Christian die interne Ansicht behalten will.
