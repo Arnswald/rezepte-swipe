@@ -293,3 +293,80 @@ export function getTrendingCounts(): Record<string, { likes: number; supers: num
   for (const r of rows) out[r.slug] = { likes: r.likes, supers: r.supers };
   return out;
 }
+
+// ── Admin-Verwaltung (Personen löschen etc.) ──────────────────────────────────
+
+export interface AdminPerson {
+  guestId: string;
+  name: string;
+  friendCode: string | null;
+  likes: number;
+  supers: number;
+  nopes: number;
+  total: number;
+  connections: number;
+  liked: string[];
+  lastActive: string | null;
+  createdAt: string | null;
+}
+
+/**
+ * Alle Personen für das Admin-Panel — vereint die `guests`-Tabelle (mit Code)
+ * und die `verdicts` (auch Alt-Gäste ohne guests-Zeile), plus Verbindungs-Anzahl.
+ */
+export function getAdminPersons(): AdminPerson[] {
+  const db = getDb();
+  const guests = db.prepare(`SELECT guest_id, name, friend_code, created_at FROM guests`).all() as GuestRow[];
+  const verdicts = db
+    .prepare(`SELECT guest_id, name, recipe_name, slug, verdict, updated_at FROM verdicts`)
+    .all() as { guest_id: string; name: string; recipe_name: string; slug: string; verdict: Verdict; updated_at: string }[];
+  const conns = db.prepare(`SELECT guest_a, guest_b FROM connections`).all() as { guest_a: string; guest_b: string }[];
+
+  const map = new Map<string, AdminPerson>();
+  const ensure = (id: string, name: string): AdminPerson => {
+    let p = map.get(id);
+    if (!p) {
+      p = { guestId: id, name: name || "Gast", friendCode: null, likes: 0, supers: 0, nopes: 0, total: 0, connections: 0, liked: [], lastActive: null, createdAt: null };
+      map.set(id, p);
+    }
+    return p;
+  };
+
+  for (const g of guests) {
+    const p = ensure(g.guest_id, g.name);
+    p.name = g.name;
+    p.friendCode = g.friend_code;
+    p.createdAt = g.created_at;
+  }
+  for (const v of verdicts) {
+    const p = ensure(v.guest_id, v.name);
+    if (v.name) p.name = v.name;
+    if (v.verdict === "like") p.likes += 1;
+    else if (v.verdict === "super") p.supers += 1;
+    else p.nopes += 1;
+    p.total += 1;
+    if (v.verdict === "like" || v.verdict === "super") p.liked.push(v.recipe_name || v.slug);
+    if (!p.lastActive || v.updated_at > p.lastActive) p.lastActive = v.updated_at;
+  }
+  const connCount = new Map<string, number>();
+  for (const c of conns) {
+    connCount.set(c.guest_a, (connCount.get(c.guest_a) ?? 0) + 1);
+    connCount.set(c.guest_b, (connCount.get(c.guest_b) ?? 0) + 1);
+  }
+  for (const [id, p] of map) p.connections = connCount.get(id) ?? 0;
+
+  return [...map.values()].sort(
+    (a, b) => (b.lastActive ?? "").localeCompare(a.lastActive ?? "") || (b.createdAt ?? "").localeCompare(a.createdAt ?? ""),
+  );
+}
+
+/** Löscht eine Person vollständig: ihre Verdicts, alle ihre Verbindungen und den Gast selbst. */
+export function deleteGuestCascade(guestId: string): { verdicts: number; connections: number; guest: number } {
+  const db = getDb();
+  const tx = db.transaction((id: string) => ({
+    verdicts: db.prepare(`DELETE FROM verdicts WHERE guest_id = ?`).run(id).changes,
+    connections: db.prepare(`DELETE FROM connections WHERE guest_a = ? OR guest_b = ?`).run(id, id).changes,
+    guest: db.prepare(`DELETE FROM guests WHERE guest_id = ?`).run(id).changes,
+  }));
+  return tx(guestId);
+}

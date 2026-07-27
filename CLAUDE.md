@@ -178,7 +178,7 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
 | Datei | Zweck |
 |---|---|
 | `src/app/page.tsx` | Name-Gate, 3-Tab-Nav (Swipe/Raster/Account), Deck, Raster (Trending+Suche), Detail-Sheet, AccountView, Deep-Link `?rezept=` |
-| `src/app/admin/page.tsx` | Admin-Auswertung (PIN-Gate + Dashboard) |
+| `src/app/admin/page.tsx` | Admin-Auswertung + Personen-Verwaltung (PIN-Gate, Löschen) |
 | `src/app/rezept/[slug]/page.tsx` | Teilbare, server-gerenderte Rezept-Seite (OG-Tags) |
 | `src/components/ShareButton.tsx` | Teilen via `navigator.share`, Fallback Link-Copy |
 | `src/lib/recipes.ts` | Rezept-Parser (+ `getRecipeBySlug` für die Detail-Seite) |
@@ -189,6 +189,7 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
 | `src/app/api/friends/connect/route.ts` | POST: per Code verbinden |
 | `src/app/api/friends/matches/route.ts` | POST: Verbindungen + Matches („beide mögen es") |
 | `src/app/api/admin/stats/route.ts` | GET (x-admin-pin): aggregierte Auswertung |
+| `src/app/api/admin/persons/route.ts` | GET/DELETE (x-admin-pin): Personen listen + löschen (kaskadiert Verdicts+Verbindungen) |
 | `src/app/api/recipes/route.ts` | GET: alle Rezepte + Kategorien |
 | `src/app/api/recipes/trending/route.ts` | GET: öffentliche Beliebtheits-Zähler (keine Namen) |
 | `src/app/api/recipes/image/[name]/route.ts` | Bild → WebP, Disk-Cache |

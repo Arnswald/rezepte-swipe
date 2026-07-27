@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
-import { Loader2, RefreshCw, LogOut, Heart, Star, X, ChevronDown, Lock } from "lucide-react";
+import { Loader2, RefreshCw, LogOut, Heart, Star, X, ChevronDown, Lock, Trash2 } from "lucide-react";
 import { AnimatedInput } from "@/components/ui/AnimatedInput";
 
 // ── Types (Spiegel der Stats-API) ─────────────────────────────
@@ -14,6 +14,12 @@ interface Stats {
   recipes: Recipe[];
   guests: Guest[];
   recent: Recent[];
+}
+// Spiegel von AdminPerson aus /api/admin/persons
+interface AdminPerson {
+  guestId: string; name: string; friendCode: string | null;
+  likes: number; supers: number; nopes: number; total: number;
+  connections: number; liked: string[]; lastActive: string | null; createdAt: string | null;
 }
 
 const PIN_KEY = "rezepte-admin-pin";
@@ -34,6 +40,7 @@ export default function AdminPage() {
   const [pin, setPin] = useState("");
   const [authed, setAuthed] = useState(false);
   const [stats, setStats] = useState<Stats | null>(null);
+  const [persons, setPersons] = useState<AdminPerson[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -45,6 +52,9 @@ export default function AdminPage() {
         const d = (await res.json()) as Stats;
         setStats(d); setAuthed(true);
         sessionStorage.setItem(PIN_KEY, usePin);
+        // Personen fürs Verwaltungs-Panel nachladen
+        const pRes = await fetch("/api/admin/persons", { headers: { "x-admin-pin": usePin }, cache: "no-store" });
+        if (pRes.ok) setPersons(((await pRes.json()).persons ?? []) as AdminPerson[]);
       } else if (res.status === 401) {
         setError("Falscher PIN."); setAuthed(false); sessionStorage.removeItem(PIN_KEY);
       } else if (res.status === 503) {
@@ -59,13 +69,23 @@ export default function AdminPage() {
     }
   }, []);
 
+  // Person löschen (kaskadierend), danach neu laden
+  const deletePerson = useCallback(async (guestId: string) => {
+    const res = await fetch("/api/admin/persons", {
+      method: "DELETE",
+      headers: { "x-admin-pin": pin, "Content-Type": "application/json" },
+      body: JSON.stringify({ guestId }),
+    });
+    if (res.ok) await load(pin);
+  }, [pin, load]);
+
   // Beim Öffnen: gespeicherten PIN probieren
   useEffect(() => {
     const saved = sessionStorage.getItem(PIN_KEY);
     if (saved) { setPin(saved); load(saved); }
   }, [load]);
 
-  const logout = () => { sessionStorage.removeItem(PIN_KEY); setAuthed(false); setStats(null); setPin(""); };
+  const logout = () => { sessionStorage.removeItem(PIN_KEY); setAuthed(false); setStats(null); setPersons([]); setPin(""); };
 
   // ── PIN-Gate ────────────────────────────────────────────────
   if (!authed) {
@@ -163,12 +183,14 @@ export default function AdminPage() {
             </section>
           )}
 
-          {/* Gäste */}
-          {stats.guests.length > 0 && (
+          {/* Personen — Verwaltung (löschen etc.) */}
+          {persons.length > 0 && (
             <section>
-              <h2 className="text-sm font-semibold text-text-muted uppercase tracking-wide mb-3">Gäste</h2>
+              <h2 className="text-sm font-semibold text-text-muted uppercase tracking-wide mb-3">
+                Personen <span className="normal-case text-text-muted/60">({persons.length})</span>
+              </h2>
               <div className="space-y-2">
-                {stats.guests.map((g) => <GuestRow key={g.guestId} g={g} />)}
+                {persons.map((p) => <PersonAdminRow key={p.guestId} p={p} onDelete={deletePerson} />)}
               </div>
             </section>
           )}
@@ -198,28 +220,70 @@ export default function AdminPage() {
   );
 }
 
-// Einzelne Gast-Zeile (aufklappbar: was mochte diese Person)
-function GuestRow({ g }: { g: Guest }) {
+// Einzelne Person (aufklappbar + löschbar). Löschen ist zweistufig (Bestätigung inline).
+function PersonAdminRow({ p, onDelete }: { p: AdminPerson; onDelete: (guestId: string) => Promise<void> }) {
   const [open, setOpen] = useState(false);
+  const [confirm, setConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const del = async () => {
+    setDeleting(true);
+    try { await onDelete(p.guestId); } finally { setDeleting(false); }
+  };
+
   return (
     <div className="bg-surface border border-border rounded-xl overflow-hidden">
-      <button onClick={() => setOpen((o) => !o)} className="w-full flex items-center gap-3 px-4 py-3 text-left">
-        <div className="w-9 h-9 rounded-full bg-accent/12 text-accent flex items-center justify-center text-sm font-bold shrink-0">
-          {g.name.slice(0, 1).toUpperCase()}
-        </div>
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-text-primary truncate">{g.name}</p>
-          <p className="text-[11px] text-text-muted tabular-nums">
-            {g.like + g.super} mögen · {g.nope} nö · {g.total} gesamt
-          </p>
-        </div>
-        <ChevronDown className={`w-4 h-4 text-text-muted shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
-      </button>
+      <div className="flex items-center gap-2 px-4 py-3">
+        <button onClick={() => setOpen((o) => !o)} className="flex items-center gap-3 min-w-0 flex-1 text-left">
+          <div className="w-9 h-9 rounded-full bg-accent/12 text-accent flex items-center justify-center text-sm font-bold shrink-0">
+            {p.name.slice(0, 1).toUpperCase()}
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold text-text-primary truncate">
+              {p.name}
+              {p.friendCode && <span className="ml-2 text-[10px] font-mono text-text-muted">{p.friendCode}</span>}
+            </p>
+            <p className="text-[11px] text-text-muted tabular-nums">
+              {p.likes + p.supers} mögen · {p.nopes} nö · {p.connections} verbunden
+            </p>
+          </div>
+          <ChevronDown className={`w-4 h-4 text-text-muted shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
+        </button>
+        {!confirm ? (
+          <button
+            onClick={() => setConfirm(true)}
+            aria-label={`${p.name} löschen`}
+            className="shrink-0 w-8 h-8 rounded-lg text-text-muted hover:text-[#bd5138] hover:bg-[#bd5138]/10 flex items-center justify-center transition-colors"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        ) : (
+          <div className="shrink-0 flex items-center gap-1">
+            <button
+              onClick={del}
+              disabled={deleting}
+              className="px-2.5 py-1.5 rounded-lg bg-[#bd5138] text-white text-xs font-semibold flex items-center gap-1 active:scale-95 transition-transform disabled:opacity-60"
+            >
+              {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} Löschen
+            </button>
+            <button
+              onClick={() => setConfirm(false)}
+              disabled={deleting}
+              className="px-2 py-1.5 rounded-lg bg-surface-elevated border border-border text-text-muted text-xs"
+            >
+              Abbr.
+            </button>
+          </div>
+        )}
+      </div>
       {open && (
-        <div className="px-4 pb-3 -mt-1">
-          {g.liked.length > 0 ? (
+        <div className="px-4 pb-3 -mt-1 space-y-2">
+          <p className="text-[11px] text-text-muted tabular-nums">
+            {p.total} Bewertungen{p.lastActive ? ` · zuletzt ${fmtTime(p.lastActive)}` : ""}
+          </p>
+          {p.liked.length > 0 ? (
             <div className="flex flex-wrap gap-1.5">
-              {g.liked.map((r, i) => (
+              {p.liked.map((r, i) => (
                 <span key={i} className="px-2.5 py-1 rounded-full text-[11px] font-medium bg-[#3f6b43]/10 text-[#3f6b43] border border-[#3f6b43]/15">{r}</span>
               ))}
             </div>
