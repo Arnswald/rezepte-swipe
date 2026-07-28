@@ -5,7 +5,7 @@ import { motion, AnimatePresence, useReducedMotion, useMotionValue, useTransform
 import {
   Loader2, ChevronRight, Clock, Users, Flame,
   LayoutGrid, Layers, X, ExternalLink, AlertCircle, Check,
-  Heart, Star, RotateCcw, User, Search, Copy, UserPlus, Sparkles,
+  Heart, Star, RotateCcw, User, Search, Copy, UserPlus, Sparkles, LogOut,
 } from "lucide-react";
 
 // Instagram-Glyph (aus lucide entfernt) als inline-SVG
@@ -991,6 +991,9 @@ function MatchCelebration({
 interface Connection { guestId: string; name: string; friendCode: string }
 interface MatchRecipeUI { slug: string; recipeName: string; category: string; mine: Verdict; theirs: Verdict; bothSuper: boolean }
 interface MatchGroupUI { partner: Connection; recipes: MatchRecipeUI[] }
+// Gruppen (v3.1)
+interface GroupMatchUI { slug: string; recipeName: string; category: string; count: number; supers: number; memberCount: number; unanimous: boolean }
+interface GroupViewUI { id: string; name: string; code: string; members: { guestId: string; name: string }[]; memberCount: number; matches: GroupMatchUI[] }
 
 function AccountView({
   guestId, guestName, recipes, verdicts, onOpen, onSuggest,
@@ -1009,6 +1012,10 @@ function AccountView({
   const [loading, setLoading] = useState(true);
   const [code, setCode] = useState("");
   const [connecting, setConnecting] = useState(false);
+  const [groups, setGroups] = useState<GroupViewUI[]>([]);
+  const [groupName, setGroupName] = useState("");
+  const [joinCode, setJoinCode] = useState("");
+  const [groupBusy, setGroupBusy] = useState(false);
 
   const bySlug = useMemo(() => {
     const m = new Map<string, Recipe>();
@@ -1043,7 +1050,57 @@ function AccountView({
     }
   }, [guestId, guestName]);
 
-  useEffect(() => { load(); }, [load]);
+  const loadGroups = useCallback(async () => {
+    try {
+      const res = await fetch("/api/groups", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "overview", guestId, name: guestName }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok) setGroups(d.groups ?? []);
+    } catch { /* offline egal */ }
+  }, [guestId, guestName]);
+
+  useEffect(() => { load(); loadGroups(); }, [load, loadGroups]);
+
+  const groupAction = useCallback(async (body: Record<string, unknown>): Promise<Record<string, unknown> | null> => {
+    setGroupBusy(true);
+    try {
+      const res = await fetch("/api/groups", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ guestId, name: guestName, ...body }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { toast.error("Klappt nicht", (d.error as string) ?? "Versuch's nochmal."); return null; }
+      await loadGroups();
+      return d;
+    } catch {
+      toast.error("Keine Verbindung", "Versuch's gleich nochmal."); return null;
+    } finally {
+      setGroupBusy(false);
+    }
+  }, [guestId, guestName, loadGroups, toast]);
+
+  const createGroup = async () => {
+    const n = groupName.trim();
+    if (!n) return;
+    const d = await groupAction({ action: "create", groupName: n });
+    if (d) { setGroupName(""); toast.success("Gruppe erstellt 🎉", "Teile den Code, damit andere beitreten."); }
+  };
+  const joinGroup = async () => {
+    const c = joinCode.trim();
+    if (!c) return;
+    const d = await groupAction({ action: "join", code: c });
+    if (d) { setJoinCode(""); toast.success("Beigetreten! 🎉", "Ab jetzt seht ihr eure Gruppen-Favoriten."); }
+  };
+  const leaveGroup = async (groupId: string) => {
+    await groupAction({ action: "leave", groupId });
+  };
+  const copyGroupCode = async (c: string) => {
+    try { await navigator.clipboard.writeText(c); toast.success("Kopiert", "Gruppencode in der Zwischenablage."); } catch { /* ignore */ }
+  };
 
   const copyCode = async () => {
     try {
@@ -1194,6 +1251,90 @@ function AccountView({
                               <Star className="w-3.5 h-3.5 fill-[#d99a2b]" /> beide
                             </span>
                           )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Gruppen */}
+      <div>
+        <h3 className="text-sm font-bold text-text-primary flex items-center gap-1.5 mb-2">
+          <Users className="w-4 h-4 text-accent" /> Gruppen
+          {groups.length > 0 && <span className="text-[11px] font-normal text-text-muted tabular-nums">({groups.length})</span>}
+        </h3>
+
+        {/* Erstellen / Beitreten */}
+        <div className="rounded-2xl border border-border bg-surface p-4 space-y-2.5">
+          <div className="flex items-center gap-2">
+            <input
+              value={groupName}
+              onChange={(e) => setGroupName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") createGroup(); }}
+              placeholder="Neue Gruppe (Name)…"
+              className="flex-1 min-w-0 px-3 py-2.5 rounded-xl bg-surface-elevated border border-border text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
+            />
+            <button onClick={createGroup} disabled={groupBusy || !groupName.trim()} className="shrink-0 px-3.5 py-2.5 rounded-xl bg-accent text-white text-sm font-semibold active:scale-95 transition-transform disabled:opacity-40">
+              Erstellen
+            </button>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              value={joinCode}
+              onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+              onKeyDown={(e) => { if (e.key === "Enter") joinGroup(); }}
+              placeholder="Gruppencode, z.B. FAMI-3K2"
+              autoCapitalize="characters"
+              className="flex-1 min-w-0 px-3 py-2.5 rounded-xl bg-surface-elevated border border-border text-sm text-text-primary uppercase tracking-wider placeholder:normal-case placeholder:tracking-normal placeholder:text-text-muted focus:outline-none focus:border-accent"
+            />
+            <button onClick={joinGroup} disabled={groupBusy || !joinCode.trim()} className="shrink-0 px-3.5 py-2.5 rounded-xl bg-surface-elevated border border-border text-text-secondary text-sm font-semibold active:scale-95 transition-transform disabled:opacity-40">
+              Beitreten
+            </button>
+          </div>
+        </div>
+
+        {/* Gruppenliste mit Ranking */}
+        {groups.length > 0 && (
+          <div className="mt-3 space-y-3">
+            {groups.map((g) => (
+              <div key={g.id} className="rounded-2xl border border-border bg-surface p-3.5">
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-bold text-text-primary flex-1 min-w-0 truncate">{g.name}</p>
+                  <button onClick={() => copyGroupCode(g.code)} className="shrink-0 text-[11px] font-mono font-semibold text-accent bg-accent/10 border border-accent/15 rounded-md px-1.5 py-0.5 active:scale-95 transition-transform">
+                    {g.code}
+                  </button>
+                  <button onClick={() => leaveGroup(g.id)} disabled={groupBusy} aria-label="Gruppe verlassen" className="shrink-0 text-text-muted hover:text-[#bd5138] p-1">
+                    <LogOut className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+                <p className="text-[11px] text-text-muted mt-1 mb-2.5 truncate">
+                  {g.members.map((m) => m.name).join(", ")} · {g.memberCount} {g.memberCount === 1 ? "Mitglied" : "Mitglieder"}
+                </p>
+                {g.matches.length === 0 ? (
+                  <p className="text-xs text-text-muted">Noch keine Favoriten in der Gruppe — wischt los!</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {g.matches.slice(0, 12).map((m) => {
+                      const r = bySlug.get(m.slug);
+                      return (
+                        <button
+                          key={m.slug}
+                          onClick={() => { if (r) onOpen(r); }}
+                          className="w-full flex items-center gap-3 p-1.5 rounded-xl text-left active:bg-surface-elevated transition-colors"
+                        >
+                          <div className="w-11 h-11 shrink-0 rounded-lg overflow-hidden bg-surface-elevated">
+                            {r ? <RecipeImage r={r} w={400} className="w-full h-full object-cover" /> : null}
+                          </div>
+                          <span className="flex-1 min-w-0 text-sm font-medium text-text-primary truncate">{m.recipeName || r?.name || m.slug}</span>
+                          <span className={`shrink-0 flex items-center gap-1 text-[11px] font-bold tabular-nums px-2 py-0.5 rounded-full ${m.unanimous ? "bg-[#3f6b43]/15 text-[#3f6b43]" : "bg-surface-elevated text-text-muted"}`}>
+                            {m.count}/{m.memberCount}
+                            {m.unanimous && <Check className="w-3 h-3" />}
+                          </span>
                         </button>
                       );
                     })}

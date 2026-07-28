@@ -9,6 +9,7 @@
 import Database from "better-sqlite3";
 import { existsSync, mkdirSync } from "fs";
 import { join } from "path";
+import { randomUUID } from "crypto";
 import { env } from "@/lib/env";
 
 export type Verdict = "like" | "nope" | "super";
@@ -65,6 +66,21 @@ function getDb(): Database.Database {
       created_at TEXT NOT NULL,
       PRIMARY KEY (guest_a, guest_b)
     );
+
+    -- v3.1: Gruppen (mehrere Personen) mit teilbarem Gruppencode.
+    CREATE TABLE IF NOT EXISTS groups (
+      group_id   TEXT PRIMARY KEY,
+      name       TEXT NOT NULL,
+      group_code TEXT NOT NULL UNIQUE,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS group_members (
+      group_id  TEXT NOT NULL,
+      guest_id  TEXT NOT NULL,
+      joined_at TEXT NOT NULL,
+      PRIMARY KEY (group_id, guest_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_group_members_guest ON group_members(guest_id);
   `);
   globalForDb.rezepteDb = database;
   return database;
@@ -385,13 +401,186 @@ export function adminDisconnect(a: string, b: string): { removed: number } {
   return { removed };
 }
 
-/** Löscht eine Person vollständig: ihre Verdicts, alle ihre Verbindungen und den Gast selbst. */
+/** Löscht eine Person vollständig: Verdicts, Verbindungen, Gruppen-Mitgliedschaften, Gast. */
 export function deleteGuestCascade(guestId: string): { verdicts: number; connections: number; guest: number } {
   const db = getDb();
-  const tx = db.transaction((id: string) => ({
-    verdicts: db.prepare(`DELETE FROM verdicts WHERE guest_id = ?`).run(id).changes,
-    connections: db.prepare(`DELETE FROM connections WHERE guest_a = ? OR guest_b = ?`).run(id, id).changes,
-    guest: db.prepare(`DELETE FROM guests WHERE guest_id = ?`).run(id).changes,
-  }));
+  const tx = db.transaction((id: string) => {
+    const verdicts = db.prepare(`DELETE FROM verdicts WHERE guest_id = ?`).run(id).changes;
+    const connections = db.prepare(`DELETE FROM connections WHERE guest_a = ? OR guest_b = ?`).run(id, id).changes;
+    db.prepare(`DELETE FROM group_members WHERE guest_id = ?`).run(id);
+    const guest = db.prepare(`DELETE FROM guests WHERE guest_id = ?`).run(id).changes;
+    return { verdicts, connections, guest };
+  });
   return tx(guestId);
+}
+
+// ── v3.1: Gruppen ─────────────────────────────────────────────────────────────
+
+export interface GroupRow { group_id: string; name: string; group_code: string; created_at: string }
+
+/** Ein Gericht im Gruppen-Ranking: wie viele Mitglieder mögen es (like/super). */
+export interface GroupMatch {
+  slug: string;
+  recipeName: string;
+  category: string;
+  count: number;        // Mitglieder, die es mögen (like ODER super)
+  supers: number;       // davon per Superlike
+  memberCount: number;  // Gruppengröße
+  unanimous: boolean;   // alle Mitglieder mögen es
+}
+
+export interface GroupView {
+  id: string;
+  name: string;
+  code: string;
+  members: { guestId: string; name: string }[];
+  memberCount: number;
+  matches: GroupMatch[];
+}
+
+function generateGroupCode(db: Database.Database, name: string): string {
+  const prefix = codePrefix(name);
+  const exists = db.prepare(`SELECT 1 FROM groups WHERE group_code = ?`);
+  for (let i = 0; i < 40; i++) {
+    const code = `${prefix}-${randomSuffix(i < 20 ? 3 : 4)}`;
+    if (!exists.get(code)) return code;
+  }
+  return `${prefix}-${randomSuffix(6)}`;
+}
+
+/** Mitglieder einer Gruppe mit Namen (aus guests, Fallback verdicts). */
+function groupMembers(db: Database.Database, groupId: string): { guestId: string; name: string }[] {
+  return db.prepare(`
+    SELECT gm.guest_id AS guestId,
+           COALESCE(g.name, (SELECT v.name FROM verdicts v WHERE v.guest_id = gm.guest_id LIMIT 1), 'Gast') AS name
+    FROM group_members gm
+    LEFT JOIN guests g ON g.guest_id = gm.guest_id
+    WHERE gm.group_id = ?
+    ORDER BY name COLLATE NOCASE
+  `).all(groupId) as { guestId: string; name: string }[];
+}
+
+/** Gruppen-Ranking: Gerichte sortiert nach Anzahl Mitglieder, die sie mögen. */
+export function getGroupMatches(groupId: string): GroupMatch[] {
+  const db = getDb();
+  const memberCount = (db.prepare(`SELECT COUNT(*) AS n FROM group_members WHERE group_id = ?`).get(groupId) as { n: number }).n;
+  if (memberCount === 0) return [];
+  const rows = db.prepare(`
+    SELECT v.slug AS slug,
+           MAX(v.recipe_name) AS recipeName,
+           MAX(v.category) AS category,
+           COUNT(DISTINCT v.guest_id) AS cnt,
+           COUNT(DISTINCT CASE WHEN v.verdict = 'super' THEN v.guest_id END) AS supers
+    FROM verdicts v
+    JOIN group_members gm ON gm.guest_id = v.guest_id AND gm.group_id = @gid
+    WHERE v.verdict IN ('like','super')
+    GROUP BY v.slug
+    ORDER BY cnt DESC, supers DESC, recipeName ASC
+  `).all({ gid: groupId }) as { slug: string; recipeName: string; category: string; cnt: number; supers: number }[];
+  return rows.map((r) => ({
+    slug: r.slug,
+    recipeName: r.recipeName || r.slug,
+    category: r.category || "",
+    count: r.cnt,
+    supers: r.supers,
+    memberCount,
+    unanimous: r.cnt === memberCount,
+  }));
+}
+
+export function getGroupByCode(code: string): GroupRow | undefined {
+  const norm = code.trim().toUpperCase().replace(/\s/g, "");
+  const db = getDb();
+  const exact = db.prepare(`SELECT * FROM groups WHERE UPPER(group_code) = ?`).get(norm) as GroupRow | undefined;
+  if (exact) return exact;
+  const stripped = norm.replace(/[^A-Z0-9]/g, "");
+  return db.prepare(`SELECT * FROM groups WHERE REPLACE(UPPER(group_code), '-', '') = ?`).get(stripped) as GroupRow | undefined;
+}
+
+/** Legt eine Gruppe an; wenn creatorGuestId gesetzt ist, wird er direkt Mitglied. */
+export function createGroup(creatorGuestId: string | null, name: string, now: string): GroupRow {
+  const db = getDb();
+  const group_id = randomUUID();
+  const code = generateGroupCode(db, name || "Gruppe");
+  db.prepare(`INSERT INTO groups (group_id, name, group_code, created_at) VALUES (?, ?, ?, ?)`).run(group_id, name || "Gruppe", code, now);
+  if (creatorGuestId) {
+    db.prepare(`INSERT OR IGNORE INTO group_members (group_id, guest_id, joined_at) VALUES (?, ?, ?)`).run(group_id, creatorGuestId, now);
+  }
+  return { group_id, name: name || "Gruppe", group_code: code, created_at: now };
+}
+
+export type JoinGroupResult = { ok: true; group: GroupRow; already: boolean } | { ok: false; reason: "not_found" };
+
+export function joinGroupByCode(guestId: string, code: string, now: string): JoinGroupResult {
+  const g = getGroupByCode(code);
+  if (!g) return { ok: false, reason: "not_found" };
+  const db = getDb();
+  const had = db.prepare(`SELECT 1 FROM group_members WHERE group_id = ? AND guest_id = ?`).get(g.group_id, guestId);
+  if (!had) db.prepare(`INSERT INTO group_members (group_id, guest_id, joined_at) VALUES (?, ?, ?)`).run(g.group_id, guestId, now);
+  return { ok: true, group: g, already: !!had };
+}
+
+/** Verlässt eine Gruppe; leere Gruppen werden aufgeräumt. */
+export function leaveGroup(guestId: string, groupId: string): { removed: number; deletedGroup: boolean } {
+  const db = getDb();
+  const removed = db.prepare(`DELETE FROM group_members WHERE group_id = ? AND guest_id = ?`).run(groupId, guestId).changes;
+  const remaining = (db.prepare(`SELECT COUNT(*) AS n FROM group_members WHERE group_id = ?`).get(groupId) as { n: number }).n;
+  let deletedGroup = false;
+  if (remaining === 0) {
+    db.prepare(`DELETE FROM groups WHERE group_id = ?`).run(groupId);
+    deletedGroup = true;
+  }
+  return { removed, deletedGroup };
+}
+
+/** Alle Gruppen eines Gasts inkl. Mitglieder + Ranking. */
+export function getGroupsForGuest(guestId: string): GroupView[] {
+  const db = getDb();
+  const groups = db.prepare(`
+    SELECT g.* FROM groups g
+    JOIN group_members gm ON gm.group_id = g.group_id
+    WHERE gm.guest_id = ?
+    ORDER BY g.created_at DESC
+  `).all(guestId) as GroupRow[];
+  return groups.map((g) => {
+    const members = groupMembers(db, g.group_id);
+    return { id: g.group_id, name: g.name, code: g.group_code, members, memberCount: members.length, matches: getGroupMatches(g.group_id) };
+  });
+}
+
+// ── Admin: Gruppen verwalten ──────────────────────────────────────────────────
+
+export interface AdminGroup {
+  id: string; name: string; code: string; createdAt: string;
+  members: { guestId: string; name: string }[];
+  memberCount: number;
+}
+
+export function getAdminGroups(): AdminGroup[] {
+  const db = getDb();
+  const groups = db.prepare(`SELECT * FROM groups ORDER BY created_at DESC`).all() as GroupRow[];
+  return groups.map((g) => {
+    const members = groupMembers(db, g.group_id);
+    return { id: g.group_id, name: g.name, code: g.group_code, createdAt: g.created_at, members, memberCount: members.length };
+  });
+}
+
+export function addGroupMember(groupId: string, guestId: string, now: string): { added: boolean } {
+  const db = getDb();
+  const had = db.prepare(`SELECT 1 FROM group_members WHERE group_id = ? AND guest_id = ?`).get(groupId, guestId);
+  if (!had) db.prepare(`INSERT INTO group_members (group_id, guest_id, joined_at) VALUES (?, ?, ?)`).run(groupId, guestId, now);
+  return { added: !had };
+}
+
+export function removeGroupMember(groupId: string, guestId: string): { removed: number } {
+  return { removed: getDb().prepare(`DELETE FROM group_members WHERE group_id = ? AND guest_id = ?`).run(groupId, guestId).changes };
+}
+
+export function deleteGroup(groupId: string): { members: number; group: number } {
+  const db = getDb();
+  const tx = db.transaction((id: string) => ({
+    members: db.prepare(`DELETE FROM group_members WHERE group_id = ?`).run(id).changes,
+    group: db.prepare(`DELETE FROM groups WHERE group_id = ?`).run(id).changes,
+  }));
+  return tx(groupId);
 }

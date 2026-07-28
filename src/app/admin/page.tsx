@@ -22,6 +22,11 @@ interface AdminPerson {
   connections: number; connectedTo: { guestId: string; name: string }[];
   liked: string[]; lastActive: string | null; createdAt: string | null;
 }
+// Spiegel von AdminGroup aus /api/admin/groups
+interface AdminGroup {
+  id: string; name: string; code: string; createdAt: string;
+  members: { guestId: string; name: string }[]; memberCount: number;
+}
 
 const PIN_KEY = "rezepte-admin-pin";
 
@@ -42,6 +47,8 @@ export default function AdminPage() {
   const [authed, setAuthed] = useState(false);
   const [stats, setStats] = useState<Stats | null>(null);
   const [persons, setPersons] = useState<AdminPerson[]>([]);
+  const [groups, setGroups] = useState<AdminGroup[]>([]);
+  const [newGroupName, setNewGroupName] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -53,9 +60,11 @@ export default function AdminPage() {
         const d = (await res.json()) as Stats;
         setStats(d); setAuthed(true);
         sessionStorage.setItem(PIN_KEY, usePin);
-        // Personen fürs Verwaltungs-Panel nachladen
+        // Personen + Gruppen fürs Verwaltungs-Panel nachladen
         const pRes = await fetch("/api/admin/persons", { headers: { "x-admin-pin": usePin }, cache: "no-store" });
         if (pRes.ok) setPersons(((await pRes.json()).persons ?? []) as AdminPerson[]);
+        const gRes = await fetch("/api/admin/groups", { headers: { "x-admin-pin": usePin }, cache: "no-store" });
+        if (gRes.ok) setGroups(((await gRes.json()).groups ?? []) as AdminGroup[]);
       } else if (res.status === 401) {
         setError("Falscher PIN."); setAuthed(false); sessionStorage.removeItem(PIN_KEY);
       } else if (res.status === 503) {
@@ -90,13 +99,27 @@ export default function AdminPage() {
     if (res.ok) await load(pin);
   }, [pin, load]);
 
+  // Gruppen-Aktionen (Admin), danach neu laden
+  const groupApi = useCallback(async (method: string, body: Record<string, unknown>) => {
+    const res = await fetch("/api/admin/groups", {
+      method,
+      headers: { "x-admin-pin": pin, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (res.ok) await load(pin);
+  }, [pin, load]);
+  const createGroup = useCallback((name: string) => groupApi("POST", { action: "create", name }), [groupApi]);
+  const deleteGroup = useCallback((groupId: string) => groupApi("DELETE", { groupId }), [groupApi]);
+  const setGroupMember = useCallback((groupId: string, guestId: string, add: boolean) =>
+    groupApi("POST", { action: add ? "addMember" : "removeMember", groupId, guestId }), [groupApi]);
+
   // Beim Öffnen: gespeicherten PIN probieren
   useEffect(() => {
     const saved = sessionStorage.getItem(PIN_KEY);
     if (saved) { setPin(saved); load(saved); }
   }, [load]);
 
-  const logout = () => { sessionStorage.removeItem(PIN_KEY); setAuthed(false); setStats(null); setPersons([]); setPin(""); };
+  const logout = () => { sessionStorage.removeItem(PIN_KEY); setAuthed(false); setStats(null); setPersons([]); setGroups([]); setPin(""); };
 
   // ── PIN-Gate ────────────────────────────────────────────────
   if (!authed) {
@@ -207,6 +230,36 @@ export default function AdminPage() {
               </div>
             </section>
           )}
+
+          {/* Gruppen — Verwaltung */}
+          <section>
+            <h2 className="text-sm font-semibold text-text-muted uppercase tracking-wide mb-3">
+              Gruppen <span className="normal-case text-text-muted/60">({groups.length})</span>
+            </h2>
+            <div className="flex items-center gap-2 mb-3">
+              <input
+                value={newGroupName}
+                onChange={(e) => setNewGroupName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && newGroupName.trim()) { createGroup(newGroupName.trim()); setNewGroupName(""); } }}
+                placeholder="Neue Gruppe (Name)…"
+                className="flex-1 min-w-0 px-3 py-2.5 rounded-xl bg-surface border border-border text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
+              />
+              <button
+                onClick={() => { if (newGroupName.trim()) { createGroup(newGroupName.trim()); setNewGroupName(""); } }}
+                disabled={!newGroupName.trim()}
+                className="shrink-0 px-3.5 py-2.5 rounded-xl bg-accent text-white text-sm font-semibold active:scale-95 transition-transform disabled:opacity-40 flex items-center gap-1"
+              >
+                <Plus className="w-4 h-4" /> Gruppe
+              </button>
+            </div>
+            {groups.length > 0 && (
+              <div className="space-y-2">
+                {groups.map((g) => (
+                  <GroupAdminRow key={g.id} g={g} allPersons={persons} onSetMember={setGroupMember} onDelete={deleteGroup} />
+                ))}
+              </div>
+            )}
+          </section>
 
           {/* Zuletzt */}
           {stats.recent.length > 0 && (
@@ -385,6 +438,82 @@ function PersonAdminRow({
               ))}
             </div>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// Eine Gruppe im Admin: Mitglieder verwalten (hinzufügen/entfernen) + löschen.
+function GroupAdminRow({
+  g, allPersons, onSetMember, onDelete,
+}: {
+  g: AdminGroup;
+  allPersons: AdminPerson[];
+  onSetMember: (groupId: string, guestId: string, add: boolean) => Promise<void>;
+  onDelete: (groupId: string) => Promise<void>;
+}) {
+  const [confirm, setConfirm] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [picking, setPicking] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const memberIds = new Set(g.members.map((m) => m.guestId));
+  const candidates = allPersons.filter((p) => !memberIds.has(p.guestId));
+
+  const del = async () => { setDeleting(true); try { await onDelete(g.id); } finally { setDeleting(false); } };
+  const add = async (guestId: string) => { setBusy(true); try { await onSetMember(g.id, guestId, true); setPicking(false); } finally { setBusy(false); } };
+  const remove = async (guestId: string) => { setBusy(true); try { await onSetMember(g.id, guestId, false); } finally { setBusy(false); } };
+
+  return (
+    <div className="bg-surface border border-border rounded-xl p-4">
+      <div className="flex items-center gap-2 mb-2">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-bold text-text-primary truncate">{g.name}</p>
+          <p className="text-[11px] text-text-muted tabular-nums">{g.memberCount} {g.memberCount === 1 ? "Mitglied" : "Mitglieder"}</p>
+        </div>
+        <span className="shrink-0 text-[11px] font-mono font-semibold text-accent bg-accent/10 border border-accent/15 rounded-md px-1.5 py-0.5">{g.code}</span>
+        {!confirm ? (
+          <button onClick={() => setConfirm(true)} aria-label="Gruppe löschen" className="shrink-0 w-8 h-8 rounded-lg text-text-muted hover:text-[#bd5138] hover:bg-[#bd5138]/10 flex items-center justify-center">
+            <Trash2 className="w-4 h-4" />
+          </button>
+        ) : (
+          <div className="shrink-0 flex items-center gap-1">
+            <button onClick={del} disabled={deleting} className="px-2.5 py-1.5 rounded-lg bg-[#bd5138] text-white text-xs font-semibold flex items-center gap-1 disabled:opacity-60">
+              {deleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />} Löschen
+            </button>
+            <button onClick={() => setConfirm(false)} disabled={deleting} className="px-2 py-1.5 rounded-lg bg-surface-elevated border border-border text-text-muted text-xs">Abbr.</button>
+          </div>
+        )}
+      </div>
+      {g.members.length > 0 ? (
+        <div className="flex flex-wrap gap-1.5">
+          {g.members.map((m) => (
+            <span key={m.guestId} className="inline-flex items-center gap-1 pl-2.5 pr-1 py-1 rounded-full text-[11px] font-medium bg-accent/10 text-accent border border-accent/15">
+              {m.name}
+              <button onClick={() => remove(m.guestId)} disabled={busy} aria-label="Aus Gruppe entfernen" className="w-4 h-4 rounded-full hover:bg-[#bd5138]/15 hover:text-[#bd5138] flex items-center justify-center">
+                <X className="w-3 h-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : (
+        <p className="text-xs text-text-muted">Noch keine Mitglieder.</p>
+      )}
+      {!picking ? (
+        candidates.length > 0 && (
+          <button onClick={() => setPicking(true)} className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-accent">
+            <Plus className="w-3.5 h-3.5" /> Mitglied
+          </button>
+        )
+      ) : (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {candidates.map((p) => (
+            <button key={p.guestId} onClick={() => add(p.guestId)} disabled={busy} className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] bg-surface-elevated border border-border text-text-secondary disabled:opacity-50">
+              {p.name}{p.friendCode && <span className="font-mono text-text-muted">{p.friendCode}</span>}
+            </button>
+          ))}
+          <button onClick={() => setPicking(false)} className="px-2 py-1 text-[11px] text-text-muted">Abbr.</button>
         </div>
       )}
     </div>

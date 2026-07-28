@@ -162,6 +162,13 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
     der/die andere sieht es in „Eure Matches" (echtes Live-Notify für beide = v4).
     Backend: `/api/verdict` gibt bei like/super die passenden Partner zurück
     (`getMatchPartnersForSlug` in `db.ts`).
+- **v3.1 (LIVE-fähig, 28.07.2026): Gruppen.** Echte Gruppen (mehrere Personen) mit
+  teilbarem **Gruppencode** (Name drin, z.B. `FAMI-3K2`). In „Account": Gruppe
+  erstellen / per Code beitreten / verlassen. **Gruppen-Ranking** = Gerichte
+  sortiert nach „wie viele Mitglieder mögen es" (X/N), einstimmige grün + ✓ markiert.
+  Admin (`/admin` → „Gruppen"): Gruppen anlegen, Mitglieder hinzufügen/entfernen,
+  löschen. Tabellen `groups` + `group_members`; Ranking in `getGroupMatches`.
+  Freundescodes sind im Admin sichtbar/kopierbar; Personen dort verbindbar/trennbar.
 - **v4 (offen): Live-Match-Session** — gemeinsames Swipen in Echtzeit, beide Seiten
   bekommen das „Match für heute Abend"-Popup sofort (braucht Realtime/Polling).
 - **v4 (offen): Richtiger Login** — Code/Magic-Link statt nur localStorage, damit
@@ -182,12 +189,14 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
 | `src/app/rezept/[slug]/page.tsx` | Teilbare, server-gerenderte Rezept-Seite (OG-Tags) |
 | `src/components/ShareButton.tsx` | Teilen via `navigator.share`, Fallback Link-Copy |
 | `src/lib/recipes.ts` | Rezept-Parser (+ `getRecipeBySlug` für die Detail-Seite) |
-| `src/lib/db.ts` | better-sqlite3: `verdicts` + v3 `guests`/`connections`, Codes/Matches/Trending |
+| `src/lib/db.ts` | better-sqlite3: `verdicts` + `guests`/`connections` + `groups`/`group_members`, Codes/Matches/Trending/Gruppen-Ranking |
 | `src/lib/env.ts` | Env-Zugriff (RECIPES-Pfade, DATA_DIR, ADMIN_PIN, SITE_URL, Webhook) |
 | `src/app/api/verdict/route.ts` | POST: Verdict speichern/löschen (+ `ensureGuest`) |
 | `src/app/api/friends/register/route.ts` | POST: Gast anlegen → Freundescode |
 | `src/app/api/friends/connect/route.ts` | POST: per Code verbinden |
 | `src/app/api/friends/matches/route.ts` | POST: Verbindungen + Matches („beide mögen es") |
+| `src/app/api/groups/route.ts` | POST (action): Gruppen — overview/create/join/leave (Gruppencode) |
+| `src/app/api/admin/groups/route.ts` | GET/POST/DELETE (x-admin-pin): Gruppen listen/erstellen/Mitglieder/löschen |
 | `src/app/api/admin/stats/route.ts` | GET (x-admin-pin): aggregierte Auswertung |
 | `src/app/api/admin/persons/route.ts` | GET/DELETE (x-admin-pin): Personen listen + löschen (kaskadiert Verdicts+Verbindungen) |
 | `src/app/api/admin/connections/route.ts` | POST/DELETE (x-admin-pin): zwei Personen verbinden/trennen |
