@@ -1040,10 +1040,10 @@ interface MatchRecipeUI { slug: string; recipeName: string; category: string; mi
 interface MatchGroupUI { partner: Connection; recipes: MatchRecipeUI[] }
 // Gruppen (v3.1)
 interface GroupMatchUI { slug: string; recipeName: string; category: string; count: number; supers: number; memberCount: number; unanimous: boolean }
-interface GroupViewUI { id: string; name: string; code: string; members: { guestId: string; name: string }[]; memberCount: number; matches: GroupMatchUI[] }
+interface GroupViewUI { id: string; name: string; code: string; members: { guestId: string; name: string }[]; memberCount: number; matches: GroupMatchUI[]; evening: { plan: GroupMatchUI[]; myPicks: number } }
 
 function AccountView({
-  guestId, guestName, recipes, verdicts, onOpen, onSuggest, onLogout,
+  guestId, guestName, recipes, verdicts, onOpen, onSuggest, onLogout, onPlanEvening,
 }: {
   guestId: string;
   guestName: string;
@@ -1052,6 +1052,7 @@ function AccountView({
   onOpen: (r: Recipe) => void;
   onSuggest: () => void;
   onLogout: () => void;
+  onPlanEvening: (id: string, name: string) => void;
 }) {
   const toast = useToast();
   const [friendCode, setFriendCode] = useState("");
@@ -1379,6 +1380,45 @@ function AccountView({
                 >
                   <Share2 className="w-3.5 h-3.5" /> Einladungslink verschicken
                 </button>
+
+                {/* Für heute Abend planen */}
+                <button
+                  onClick={() => onPlanEvening(g.id, g.name)}
+                  className="w-full mb-2.5 py-2.5 rounded-xl bg-accent text-white text-xs font-bold flex items-center justify-center gap-1.5 active:scale-[0.98] transition-transform"
+                >
+                  🍳 Für heute Abend planen
+                </button>
+
+                {/* Essensplan heute (getrennte Runde) */}
+                {g.evening.plan.length > 0 && (
+                  <div className="mb-3">
+                    <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wide mb-1.5">🍳 Essensplan heute</p>
+                    <div className="space-y-1.5">
+                      {g.evening.plan.slice(0, 8).map((m) => {
+                        const r = bySlug.get(m.slug);
+                        return (
+                          <button
+                            key={m.slug}
+                            onClick={() => { if (r) onOpen(r); }}
+                            className="w-full flex items-center gap-3 p-1.5 rounded-xl text-left active:bg-surface-elevated transition-colors"
+                          >
+                            <div className="w-10 h-10 shrink-0 rounded-lg overflow-hidden bg-surface-elevated">
+                              {r ? <RecipeImage r={r} w={400} className="w-full h-full object-cover" /> : null}
+                            </div>
+                            <span className="flex-1 min-w-0 text-sm font-medium text-text-primary truncate">{m.recipeName || r?.name || m.slug}</span>
+                            <span className={`shrink-0 flex items-center gap-1 text-[11px] font-bold tabular-nums px-2 py-0.5 rounded-full ${m.unanimous ? "bg-[#3f6b43]/15 text-[#3f6b43]" : "bg-surface-elevated text-text-muted"}`}>
+                              {m.count}/{m.memberCount}
+                              {m.unanimous && <Check className="w-3 h-3" />}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Beliebt in der Gruppe (dauerhaft, aus allen Favoriten) */}
+                <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wide mb-1.5">Beliebt in der Gruppe</p>
                 {g.matches.length === 0 ? (
                   <p className="text-xs text-text-muted">Noch keine Favoriten in der Gruppe — wischt los!</p>
                 ) : (
@@ -1481,6 +1521,7 @@ export default function RezeptePage() {
   const [search, setSearch] = useState("");
   const [searchDimmed, setSearchDimmed] = useState(false);
   const [match, setMatch] = useState<{ recipe: Recipe; partners: MatchPing[] } | null>(null);
+  const [eveningGroup, setEveningGroup] = useState<{ id: string; name: string } | null>(null);
   const dimTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const deepLinkDone = useRef(false);
   const pendingGroupDone = useRef(false);
@@ -1592,7 +1633,14 @@ export default function RezeptePage() {
 
   useEffect(() => { setIndex(0); }, [activeCat]);
 
-  // Trending-Zähler laden, wenn das Raster geöffnet wird (frisch bei jedem Wechsel).
+  // Trending-Zähler: einmal beim Start (für Raster-Badges + Abend-Reihenfolge) …
+  useEffect(() => {
+    fetch("/api/recipes/trending", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((d) => setCounts(d.counts ?? {}))
+      .catch(() => { /* egal */ });
+  }, []);
+  // … und frisch, wenn das Raster geöffnet wird.
   useEffect(() => {
     if (mode !== "grid") return;
     fetch("/api/recipes/trending", { cache: "no-store" })
@@ -1639,6 +1687,49 @@ export default function RezeptePage() {
     dimTimer.current = setTimeout(() => setSearchDimmed(false), 550);
   }, []);
 
+  // ── "Essensplan für heute Abend" ────────────────────────────────
+  // Frischer Stapel nach Beliebtheit (mehr Likes zuerst), getrennt von den Favoriten.
+  const eveningRecipes = useMemo(
+    () => [...recipes].sort((a, b) => trendScore(counts[b.slug]) - trendScore(counts[a.slug]) || b.created.localeCompare(a.created)),
+    [recipes, counts],
+  );
+
+  const postEvening = useCallback((body: Record<string, unknown>) => {
+    return fetch("/api/groups", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ guestId, name: guestName, ...body }),
+    }).catch(() => { /* offline egal */ });
+  }, [guestId, guestName]);
+
+  const handleEveningVerdict = useCallback((r: Recipe, v: Verdict) => {
+    if (!eveningGroup) return;
+    setHistory((prev) => [...prev, r.slug]);
+    postEvening({ action: "evening-pick", groupId: eveningGroup.id, slug: r.slug, recipeName: r.name, category: r.category, verdict: v });
+  }, [eveningGroup, postEvening]);
+
+  const handleEveningUndo = useCallback(() => {
+    setHistory((prev) => {
+      if (prev.length === 0) return prev;
+      const last = prev[prev.length - 1];
+      setIndex((i) => Math.max(0, i - 1));
+      if (eveningGroup) postEvening({ action: "evening-pick", groupId: eveningGroup.id, slug: last, verdict: null });
+      return prev.slice(0, -1);
+    });
+  }, [eveningGroup, postEvening]);
+
+  const startEvening = useCallback((id: string, name: string) => {
+    setEveningGroup({ id, name }); setIndex(0); setHistory([]); setMode("swipe");
+  }, []);
+  const exitEvening = useCallback(() => {
+    setEveningGroup(null); setIndex(0); setHistory([]);
+  }, []);
+  const resetEveningRound = useCallback(() => {
+    if (!eveningGroup) return;
+    postEvening({ action: "evening-reset", groupId: eveningGroup.id })
+      ?.then(() => { setIndex(0); setHistory([]); toast.success("Neuer Abend", "Deine Runde ist zurückgesetzt."); });
+  }, [eveningGroup, postEvening, toast]);
+
   // Vorausladen: die nächsten Karten-Bilder schon holen, damit Wischen instant wirkt.
   useEffect(() => {
     if (mode !== "swipe" || filtered.length === 0) return;
@@ -1652,7 +1743,9 @@ export default function RezeptePage() {
     }
   }, [filtered, index, mode]);
 
-  const showDeck = !loading && mode === "swipe" && filtered.length > 0 && index < filtered.length;
+  const showDeck = !loading && mode === "swipe" && (eveningGroup
+    ? (eveningRecipes.length > 0 && index < eveningRecipes.length)
+    : (filtered.length > 0 && index < filtered.length));
 
   // Vor allem anderen: Name abfragen (nach dem Lesen aus localStorage, um Flackern zu vermeiden)
   if (!hydrated) return <div className="h-[100dvh]" />;
@@ -1689,8 +1782,8 @@ export default function RezeptePage() {
         <div className="justify-self-end" />
       </div>
 
-      {/* Kategorie-Filter — dezent, eine Reihe, bei Bedarf horizontal scrollbar (nicht im Account) */}
-      {mode !== "account" && categories.length > 0 && (
+      {/* Kategorie-Filter — dezent, eine Reihe (nicht im Account, nicht im Abend-Modus) */}
+      {mode !== "account" && !eveningGroup && categories.length > 0 && (
         <div className="flex flex-nowrap items-center gap-1.5 shrink-0 mt-4 overflow-x-auto scrollbar-none -mx-4 px-4">
           {["Alle", ...orderCategories(categories)].map((cat) => {
             const active = activeCat === cat;
@@ -1753,9 +1846,49 @@ export default function RezeptePage() {
             onOpen={setDetail}
             onSuggest={() => setSuggestOpen(true)}
             onLogout={logout}
+            onPlanEvening={startEvening}
           />
         ) : mode === "swipe" ? (
-          filtered.length > 0 ? (
+          eveningGroup ? (
+            <>
+              {/* Abend-Banner */}
+              <div className="shrink-0 flex items-center gap-2 mb-2 px-3 py-2 rounded-xl bg-accent/10 border border-accent/20">
+                <ChefHat className="w-4 h-4 text-accent shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-xs font-bold text-accent truncate">Heute Abend · {eveningGroup.name}</p>
+                  <p className="text-[10px] text-text-muted">Swipe, worauf du heute Lust hast — zählt nur für heute</p>
+                </div>
+                <button onClick={resetEveningRound} className="shrink-0 text-[11px] font-semibold text-text-muted px-2 py-1 rounded-lg active:scale-95 transition-transform">Neuer Abend</button>
+                <button onClick={exitEvening} className="shrink-0 text-[11px] font-semibold text-accent px-2 py-1 rounded-lg active:scale-95 transition-transform">Fertig</button>
+              </div>
+              {eveningRecipes.length > 0 && index < eveningRecipes.length ? (
+                <div className="flex-1 min-h-0">
+                  <SwipeDeck
+                    recipes={eveningRecipes}
+                    index={index}
+                    setIndex={setIndex}
+                    onOpen={setDetail}
+                    onVerdict={handleEveningVerdict}
+                    onUndo={handleEveningUndo}
+                    canUndo={history.length > 0}
+                  />
+                </div>
+              ) : (
+                <div className="bg-surface border border-border rounded-2xl p-8 text-center space-y-4 mt-2">
+                  <div className="text-5xl">🍳</div>
+                  <div>
+                    <h2 className="text-lg font-semibold text-text-primary">Runde fertig!</h2>
+                    <p className="text-sm text-text-muted mt-1">Schaut in der Gruppe, worauf ihr euch einigt.</p>
+                  </div>
+                  <div className="flex flex-col gap-2 max-w-xs mx-auto">
+                    <button onClick={() => setMode("account")} className="w-full py-3 rounded-xl bg-accent text-white text-sm font-semibold active:scale-[0.98] transition-transform">Essensplan ansehen</button>
+                    <button onClick={resetEveningRound} className="w-full py-2.5 rounded-xl bg-surface-elevated border border-border text-text-secondary text-sm font-medium active:scale-[0.98] transition-transform">Nochmal swipen</button>
+                    <button onClick={exitEvening} className="w-full py-2.5 rounded-xl text-text-muted text-sm font-medium">Beenden</button>
+                  </div>
+                </div>
+              )}
+            </>
+          ) : filtered.length > 0 ? (
             index < filtered.length ? (
               <SwipeDeck
                 recipes={filtered}

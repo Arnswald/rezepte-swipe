@@ -169,8 +169,23 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
   Admin (`/admin` → „Gruppen"): Gruppen anlegen, Mitglieder hinzufügen/entfernen,
   löschen. Tabellen `groups` + `group_members`; Ranking in `getGroupMatches`.
   Freundescodes sind im Admin sichtbar/kopierbar; Personen dort verbindbar/trennbar.
-- **v4 (offen): Live-Match-Session** — gemeinsames Swipen in Echtzeit, beide Seiten
-  bekommen das „Match für heute Abend"-Popup sofort (braucht Realtime/Polling).
+- **v5 (LIVE-fähig, 28.07.2026): Essensplan für heute Abend + Feinschliff.**
+  - **Match-Animation:** schwebende **Küchen-Utensilien** (Kochtopf/Bestecke/
+    Kochmütze/Suppe) statt Herzen.
+  - **Gruppen-Einladungslink:** pro Gruppe „Einladungslink verschicken"
+    (`navigator.share`, Link `/?gruppe=CODE`). Wer ihn öffnet, muss sich einen
+    Account machen und tritt danach **automatisch** der Gruppe bei (Auto-Join beim
+    App-Start, dann Account-Tab).
+  - **„Essensplan für heute Abend"** (pro Gruppe, **nacheinander**, kein Realtime):
+    Tabelle `evening_picks` — ein **getrennter, zurücksetzbarer** Swipe-Durchgang,
+    **unabhängig** von den Dauer-Favoriten (`verdicts`). Account-Gruppenkarte:
+    Button „🍳 Für heute Abend planen" → Swipe-Deck im **Abend-Modus** (Banner
+    „Heute Abend · Gruppe", **nach Beliebtheit sortiert**, Neuer Abend/Fertig).
+    Zwei Rankings pro Gruppe: **„Essensplan heute"** (Abend-Runde, X/N) +
+    **„Beliebt in der Gruppe"** (Dauer-Favoriten). `/api/groups`-Actions
+    `evening-pick` / `evening-reset`; `getEveningPlan`/`setEveningPick`/`resetEvening`.
+- **v-future (offen): Live-Match-Session** — gemeinsames Swipen in **Echtzeit**,
+  beide Seiten bekommen das „Match"-Popup sofort (braucht Realtime/Polling).
 - **v4 (LIVE-fähig, 28.07.2026): Richtiger Login (Pflicht).** `AuthGate` (ersetzt
   das alte Name-Gate): **Registrieren / Einloggen** mit **Benutzername + Passwort**
   (kein E-Mail-Dienst; Passwort mit Node-`scrypt` gehasht, Tabelle `accounts`).
@@ -203,7 +218,7 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
 | `src/app/api/friends/register/route.ts` | POST: Gast anlegen → Freundescode |
 | `src/app/api/friends/connect/route.ts` | POST: per Code verbinden |
 | `src/app/api/friends/matches/route.ts` | POST: Verbindungen + Matches („beide mögen es") |
-| `src/app/api/groups/route.ts` | POST (action): Gruppen — overview/create/join/leave (Gruppencode) |
+| `src/app/api/groups/route.ts` | POST (action): Gruppen — overview/create/join/leave + Abend-Plan (evening-pick/evening-reset) |
 | `src/app/api/admin/groups/route.ts` | GET/POST/DELETE (x-admin-pin): Gruppen listen/erstellen/Mitglieder/löschen |
 | `src/app/api/admin/stats/route.ts` | GET (x-admin-pin): aggregierte Auswertung |
 | `src/app/api/admin/persons/route.ts` | GET/DELETE (x-admin-pin): Personen listen + löschen (kaskadiert Verdicts+Verbindungen) |

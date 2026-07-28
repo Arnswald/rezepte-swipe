@@ -12,14 +12,18 @@
 import { NextResponse } from "next/server";
 import {
   ensureGuest, getGroupsForGuest, createGroup, joinGroupByCode, leaveGroup,
+  setEveningPick, resetEvening, getEveningPlan, type Verdict,
 } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
+
+const VALID: Verdict[] = ["like", "nope", "super"];
 
 export async function POST(req: Request) {
   try {
     const b = (await req.json().catch(() => ({}))) as {
       action?: string; guestId?: string; name?: string; groupName?: string; code?: string; groupId?: string;
+      slug?: string; recipeName?: string; category?: string; verdict?: string | null;
     };
     const action = b.action ?? "";
     const guestId = (b.guestId ?? "").trim().slice(0, 64);
@@ -52,6 +56,31 @@ export async function POST(req: Request) {
       const groupId = (b.groupId ?? "").trim();
       if (!groupId) return NextResponse.json({ error: "groupId fehlt" }, { status: 400 });
       return NextResponse.json({ ok: true, ...leaveGroup(guestId, groupId) });
+    }
+
+    // "Essensplan für heute Abend": eine Abend-Bewertung setzen (getrennt von Favoriten)
+    if (action === "evening-pick") {
+      const groupId = (b.groupId ?? "").trim();
+      const slug = (b.slug ?? "").trim().slice(0, 200);
+      if (!groupId || !slug) return NextResponse.json({ error: "groupId und slug sind Pflicht" }, { status: 400 });
+      const verdict = (b.verdict === null || b.verdict === undefined || b.verdict === "")
+        ? null
+        : (VALID.includes(b.verdict as Verdict) ? (b.verdict as Verdict) : undefined);
+      if (verdict === undefined) return NextResponse.json({ error: "Ungültiges Verdict" }, { status: 400 });
+      setEveningPick({
+        groupId, guestId, slug,
+        recipeName: (b.recipeName ?? "").slice(0, 200),
+        category: (b.category ?? "").slice(0, 60),
+        verdict, now: new Date().toISOString(),
+      });
+      return NextResponse.json({ ok: true, plan: getEveningPlan(groupId) });
+    }
+
+    // Abend-Runde zurücksetzen ("Neuer Abend")
+    if (action === "evening-reset") {
+      const groupId = (b.groupId ?? "").trim();
+      if (!groupId) return NextResponse.json({ error: "groupId fehlt" }, { status: 400 });
+      return NextResponse.json({ ok: true, ...resetEvening(groupId, guestId) });
     }
 
     return NextResponse.json({ error: "Unbekannte action" }, { status: 400 });

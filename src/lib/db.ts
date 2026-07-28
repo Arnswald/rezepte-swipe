@@ -82,6 +82,20 @@ function getDb(): Database.Database {
     );
     CREATE INDEX IF NOT EXISTS idx_group_members_guest ON group_members(guest_id);
 
+    -- v5: "Essensplan für heute Abend" — pro Gruppe ein separater, zurücksetzbarer
+    -- Swipe-Durchgang (getrennt von den Dauer-Favoriten/verdicts).
+    CREATE TABLE IF NOT EXISTS evening_picks (
+      group_id    TEXT NOT NULL,
+      guest_id    TEXT NOT NULL,
+      slug        TEXT NOT NULL,
+      recipe_name TEXT NOT NULL DEFAULT '',
+      category    TEXT NOT NULL DEFAULT '',
+      verdict     TEXT NOT NULL,
+      updated_at  TEXT NOT NULL,
+      PRIMARY KEY (group_id, guest_id, slug)
+    );
+    CREATE INDEX IF NOT EXISTS idx_evening_group ON evening_picks(group_id);
+
     -- v4: echte Accounts (Benutzername + Passwort). Hängt an einem guest_id (= die Identität).
     CREATE TABLE IF NOT EXISTS accounts (
       username_norm TEXT PRIMARY KEY,   -- kleingeschrieben, für Eindeutigkeit/Login
@@ -417,6 +431,7 @@ export function deleteGuestCascade(guestId: string): { verdicts: number; connect
     const verdicts = db.prepare(`DELETE FROM verdicts WHERE guest_id = ?`).run(id).changes;
     const connections = db.prepare(`DELETE FROM connections WHERE guest_a = ? OR guest_b = ?`).run(id, id).changes;
     db.prepare(`DELETE FROM group_members WHERE guest_id = ?`).run(id);
+    db.prepare(`DELETE FROM evening_picks WHERE guest_id = ?`).run(id);
     db.prepare(`DELETE FROM accounts WHERE guest_id = ?`).run(id);
     const guest = db.prepare(`DELETE FROM guests WHERE guest_id = ?`).run(id).changes;
     return { verdicts, connections, guest };
@@ -514,6 +529,8 @@ export interface GroupView {
   members: { guestId: string; name: string }[];
   memberCount: number;
   matches: GroupMatch[];
+  // "Essensplan für heute Abend": aktuelle Runde (getrennt von den Favoriten)
+  evening: { plan: GroupMatch[]; myPicks: number };
 }
 
 function generateGroupCode(db: Database.Database, name: string): string {
@@ -602,9 +619,11 @@ export function joinGroupByCode(guestId: string, code: string, now: string): Joi
 export function leaveGroup(guestId: string, groupId: string): { removed: number; deletedGroup: boolean } {
   const db = getDb();
   const removed = db.prepare(`DELETE FROM group_members WHERE group_id = ? AND guest_id = ?`).run(groupId, guestId).changes;
+  db.prepare(`DELETE FROM evening_picks WHERE group_id = ? AND guest_id = ?`).run(groupId, guestId);
   const remaining = (db.prepare(`SELECT COUNT(*) AS n FROM group_members WHERE group_id = ?`).get(groupId) as { n: number }).n;
   let deletedGroup = false;
   if (remaining === 0) {
+    db.prepare(`DELETE FROM evening_picks WHERE group_id = ?`).run(groupId);
     db.prepare(`DELETE FROM groups WHERE group_id = ?`).run(groupId);
     deletedGroup = true;
   }
@@ -622,8 +641,63 @@ export function getGroupsForGuest(guestId: string): GroupView[] {
   `).all(guestId) as GroupRow[];
   return groups.map((g) => {
     const members = groupMembers(db, g.group_id);
-    return { id: g.group_id, name: g.name, code: g.group_code, members, memberCount: members.length, matches: getGroupMatches(g.group_id) };
+    return {
+      id: g.group_id, name: g.name, code: g.group_code, members, memberCount: members.length,
+      matches: getGroupMatches(g.group_id),
+      evening: { plan: getEveningPlan(g.group_id), myPicks: getEveningPickCount(g.group_id, guestId) },
+    };
   });
+}
+
+// ── v5: "Essensplan für heute Abend" (getrennte, zurücksetzbare Runde pro Gruppe) ──
+
+/** Setzt/entfernt eine Abend-Bewertung (verdict null = entfernen). */
+export function setEveningPick(v: {
+  groupId: string; guestId: string; slug: string; recipeName: string; category: string; verdict: Verdict | null; now: string;
+}) {
+  const db = getDb();
+  if (v.verdict === null) {
+    db.prepare(`DELETE FROM evening_picks WHERE group_id = ? AND guest_id = ? AND slug = ?`).run(v.groupId, v.guestId, v.slug);
+    return;
+  }
+  db.prepare(`
+    INSERT INTO evening_picks (group_id, guest_id, slug, recipe_name, category, verdict, updated_at)
+    VALUES (@groupId, @guestId, @slug, @recipeName, @category, @verdict, @now)
+    ON CONFLICT(group_id, guest_id, slug) DO UPDATE SET
+      recipe_name = @recipeName, category = @category, verdict = @verdict, updated_at = @now
+  `).run(v);
+}
+
+/** Leert die Abend-Runde einer Person in einer Gruppe ("Neuer Abend"). */
+export function resetEvening(groupId: string, guestId: string): { removed: number } {
+  return { removed: getDb().prepare(`DELETE FROM evening_picks WHERE group_id = ? AND guest_id = ?`).run(groupId, guestId).changes };
+}
+
+export function getEveningPickCount(groupId: string, guestId: string): number {
+  return (getDb().prepare(`SELECT COUNT(*) AS n FROM evening_picks WHERE group_id = ? AND guest_id = ?`).get(groupId, guestId) as { n: number }).n;
+}
+
+/** Abend-Ranking: Gerichte sortiert danach, wie viele Mitglieder sie HEUTE wollen. */
+export function getEveningPlan(groupId: string): GroupMatch[] {
+  const db = getDb();
+  const memberCount = (db.prepare(`SELECT COUNT(*) AS n FROM group_members WHERE group_id = ?`).get(groupId) as { n: number }).n;
+  if (memberCount === 0) return [];
+  const rows = db.prepare(`
+    SELECT e.slug AS slug,
+           MAX(e.recipe_name) AS recipeName,
+           MAX(e.category) AS category,
+           COUNT(DISTINCT e.guest_id) AS cnt,
+           COUNT(DISTINCT CASE WHEN e.verdict = 'super' THEN e.guest_id END) AS supers
+    FROM evening_picks e
+    JOIN group_members gm ON gm.guest_id = e.guest_id AND gm.group_id = @gid
+    WHERE e.group_id = @gid AND e.verdict IN ('like','super')
+    GROUP BY e.slug
+    ORDER BY cnt DESC, supers DESC, recipeName ASC
+  `).all({ gid: groupId }) as { slug: string; recipeName: string; category: string; cnt: number; supers: number }[];
+  return rows.map((r) => ({
+    slug: r.slug, recipeName: r.recipeName || r.slug, category: r.category || "",
+    count: r.cnt, supers: r.supers, memberCount, unanimous: r.cnt === memberCount,
+  }));
 }
 
 // ── Admin: Gruppen verwalten ──────────────────────────────────────────────────
@@ -656,9 +730,12 @@ export function removeGroupMember(groupId: string, guestId: string): { removed: 
 
 export function deleteGroup(groupId: string): { members: number; group: number } {
   const db = getDb();
-  const tx = db.transaction((id: string) => ({
-    members: db.prepare(`DELETE FROM group_members WHERE group_id = ?`).run(id).changes,
-    group: db.prepare(`DELETE FROM groups WHERE group_id = ?`).run(id).changes,
-  }));
+  const tx = db.transaction((id: string) => {
+    db.prepare(`DELETE FROM evening_picks WHERE group_id = ?`).run(id);
+    return {
+      members: db.prepare(`DELETE FROM group_members WHERE group_id = ?`).run(id).changes,
+      group: db.prepare(`DELETE FROM groups WHERE group_id = ?`).run(id).changes,
+    };
+  });
   return tx(groupId);
 }
