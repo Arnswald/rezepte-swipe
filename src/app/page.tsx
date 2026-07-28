@@ -68,6 +68,10 @@ function saveVerdict(slug: string, v: Verdict | null) {
     localStorage.setItem(FAV_KEY, JSON.stringify(all));
   } catch { /* ignore */ }
 }
+// Lokalen Verdict-Cache komplett ersetzen (nach Login/Server-Hydration).
+function replaceVerdicts(all: Record<string, Verdict>) {
+  try { localStorage.setItem(FAV_KEY, JSON.stringify(all)); } catch { /* ignore */ }
+}
 
 // Frisch entstandenes Match (für die „Es ist ein Match!"-Animation)
 interface MatchPing { name: string; theirs: Verdict; bothSuper: boolean }
@@ -849,25 +853,39 @@ function SuggestSheet({ onClose }: { onClose: () => void }) {
   );
 }
 
-// ── Name-Gate (Pflicht vor dem Wischen) ───────────────────────
-// Ohne Namen kein Weiterkommen. Name + zufällige guestId landen in localStorage
-// und begleiten jedes Verdict, damit Christian sieht, wem was schmeckt.
+// ── Auth-Gate (Login-Pflicht: Registrieren oder Einloggen) ────────────────────
+// Ersetzt die alte Namensabfrage. Benutzername + Passwort (serverseitig gehasht).
+// onDone bekommt Name, guestId und — falls vorhanden — die Server-Bewertungen,
+// damit der Stand auf jedem Gerät hergestellt wird.
 
-function NameGate({ onDone }: { onDone: (name: string, id: string) => void }) {
-  const [name, setName] = useState("");
+function AuthGate({ onDone }: { onDone: (name: string, id: string, verdicts?: Record<string, Verdict>) => void }) {
+  const [mode, setMode] = useState<"register" | "login">("register");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const isRegister = mode === "register";
 
-  const submit = () => {
-    const n = name.trim();
-    if (!n) return;
-    let id = "";
-    try { id = localStorage.getItem(ID_KEY) || ""; } catch { /* ignore */ }
-    if (!id) {
-      id = (typeof crypto !== "undefined" && crypto.randomUUID)
-        ? crypto.randomUUID()
-        : `g_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  const submit = async () => {
+    const u = username.trim();
+    if (!u || !password) { setErr("Benutzername und Passwort eingeben."); return; }
+    setBusy(true); setErr(null);
+    try {
+      let existingId = "";
+      try { existingId = localStorage.getItem(ID_KEY) || ""; } catch { /* ignore */ }
+      const body = isRegister ? { username: u, password, guestId: existingId } : { username: u, password };
+      const res = await fetch(`/api/auth/${mode}`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { setErr((d.error as string) ?? "Hat nicht geklappt."); return; }
+      try { localStorage.setItem(NAME_KEY, d.name); localStorage.setItem(ID_KEY, d.guestId); } catch { /* ignore */ }
+      onDone(d.name, d.guestId, d.verdicts as Record<string, Verdict> | undefined);
+    } catch {
+      setErr("Keine Verbindung. Versuch's gleich nochmal.");
+    } finally {
+      setBusy(false);
     }
-    try { localStorage.setItem(NAME_KEY, n); localStorage.setItem(ID_KEY, id); } catch { /* ignore */ }
-    onDone(n, id);
   };
 
   return (
@@ -879,23 +897,48 @@ function NameGate({ onDone }: { onDone: (name: string, id: string) => void }) {
       >
         <div className="text-5xl mb-4">🍽️</div>
         <h1 className="text-[1.7rem] font-extrabold text-text-primary tracking-tight leading-tight">Wisch dich satt</h1>
-        <p className="text-sm text-text-secondary mt-2 mb-6 leading-relaxed">
-          Sag mir kurz, wie du heißt — damit Christian sieht, was dir schmeckt.
+        <p className="text-sm text-text-secondary mt-2 mb-5 leading-relaxed">
+          {isRegister
+            ? "Erstell dir einen Account — dann findest du deine Sachen auf jedem Gerät wieder."
+            : "Willkommen zurück! Melde dich an."}
         </p>
-        <div className="bg-surface border border-border rounded-3xl p-5 shadow-[0_10px_30px_rgba(70,50,30,0.10)]">
-          <AnimatedInput
-            label="Dein Name" value={name} onChange={setName} autoFocus
-            onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
-          />
+
+        <div className="bg-surface border border-border rounded-3xl p-5 shadow-[0_10px_30px_rgba(70,50,30,0.10)] space-y-3">
+          <div className="flex items-center rounded-full bg-surface-elevated p-1 border border-border">
+            {([["register", "Registrieren"], ["login", "Einloggen"]] as const).map(([m, label]) => (
+              <button
+                key={m}
+                onClick={() => { setMode(m); setErr(null); }}
+                className={`flex-1 py-1.5 rounded-full text-xs font-semibold transition-colors ${mode === m ? "bg-surface text-text-primary shadow-sm" : "text-text-muted"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          <AnimatedInput label="Benutzername" value={username} onChange={setUsername} autoFocus
+            onKeyDown={(e) => { if (e.key === "Enter") submit(); }} />
+          <AnimatedInput label="Passwort" value={password} onChange={setPassword} type="password"
+            onKeyDown={(e) => { if (e.key === "Enter") submit(); }} />
+
+          {err && <p className="text-xs text-[#bd5138] text-left">{err}</p>}
+
           <button
             onClick={submit}
-            disabled={!name.trim()}
-            className="mt-4 w-full py-3 rounded-xl bg-accent text-white text-sm font-semibold active:scale-[0.98] transition-transform disabled:opacity-50 flex items-center justify-center gap-1"
+            disabled={busy || !username.trim() || !password}
+            className="w-full py-3 rounded-xl bg-accent text-white text-sm font-semibold active:scale-[0.98] transition-transform disabled:opacity-50 flex items-center justify-center gap-1.5"
           >
-            Los geht&apos;s <ChevronRight className="w-4 h-4" />
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+            {isRegister ? "Los geht's" : "Einloggen"}
+            {!busy && <ChevronRight className="w-4 h-4" />}
           </button>
         </div>
-        <p className="text-[11px] text-text-muted mt-4">Kein Account, kein Passwort. Nur dein Name.</p>
+
+        <p className="text-[11px] text-text-muted mt-4">
+          {isRegister
+            ? "Merk dir Benutzername + Passwort — damit kommst du überall wieder rein."
+            : "Neu hier? Wechsle oben auf Registrieren."}
+        </p>
       </motion.div>
     </div>
   );
@@ -996,7 +1039,7 @@ interface GroupMatchUI { slug: string; recipeName: string; category: string; cou
 interface GroupViewUI { id: string; name: string; code: string; members: { guestId: string; name: string }[]; memberCount: number; matches: GroupMatchUI[] }
 
 function AccountView({
-  guestId, guestName, recipes, verdicts, onOpen, onSuggest,
+  guestId, guestName, recipes, verdicts, onOpen, onSuggest, onLogout,
 }: {
   guestId: string;
   guestName: string;
@@ -1004,6 +1047,7 @@ function AccountView({
   verdicts: Record<string, Verdict>;
   onOpen: (r: Recipe) => void;
   onSuggest: () => void;
+  onLogout: () => void;
 }) {
   const toast = useToast();
   const [friendCode, setFriendCode] = useState("");
@@ -1383,6 +1427,14 @@ function AccountView({
       >
         + Rezept vorschlagen
       </button>
+
+      {/* Abmelden */}
+      <button
+        onClick={onLogout}
+        className="w-full py-2.5 rounded-xl text-text-muted text-xs font-medium flex items-center justify-center gap-1.5 active:scale-[0.98] transition-transform"
+      >
+        <LogOut className="w-3.5 h-3.5" /> Abmelden
+      </button>
     </div>
   );
 }
@@ -1421,6 +1473,26 @@ export default function RezeptePage() {
       if (id) setGuestId(id);
     } catch { /* ignore */ }
     setHydrated(true);
+  }, []);
+
+  // Nach Login / beim Öffnen: Server-Bewertungen holen, damit der Stand auf jedem
+  // Gerät stimmt (der Account kann anderswo geswipt haben).
+  useEffect(() => {
+    if (!hydrated || !guestId) return;
+    fetch("/api/me", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ guestId, name: guestName }),
+    })
+      .then((r) => r.json())
+      .then((d) => { if (d.verdicts) { setVerdicts(d.verdicts); replaceVerdicts(d.verdicts); } })
+      .catch(() => { /* offline egal */ });
+  }, [hydrated, guestId, guestName]);
+
+  // Abmelden: lokale Identität + Cache löschen → Auth-Gate erscheint wieder.
+  const logout = useCallback(() => {
+    try { localStorage.removeItem(NAME_KEY); localStorage.removeItem(ID_KEY); localStorage.removeItem(FAV_KEY); } catch { /* ignore */ }
+    setGuestName(null); setGuestId(""); setVerdicts({}); setHistory([]); setIndex(0); setMode("swipe");
   }, []);
 
   const handleVerdict = useCallback((r: Recipe, v: Verdict) => {
@@ -1537,7 +1609,12 @@ export default function RezeptePage() {
 
   // Vor allem anderen: Name abfragen (nach dem Lesen aus localStorage, um Flackern zu vermeiden)
   if (!hydrated) return <div className="h-[100dvh]" />;
-  if (!guestName) return <NameGate onDone={(n, id) => { setGuestName(n); setGuestId(id); }} />;
+  if (!guestName) return (
+    <AuthGate onDone={(n, id, v) => {
+      setGuestName(n); setGuestId(id);
+      if (v) { setVerdicts(v); replaceVerdicts(v); }
+    }} />
+  );
 
   return (
     <div className="mx-auto w-full max-w-3xl h-[100dvh] flex flex-col px-4 pt-[max(env(safe-area-inset-top),0.75rem)] pb-[max(env(safe-area-inset-bottom),1.75rem)]">
@@ -1628,6 +1705,7 @@ export default function RezeptePage() {
             verdicts={verdicts}
             onOpen={setDetail}
             onSuggest={() => setSuggestOpen(true)}
+            onLogout={logout}
           />
         ) : mode === "swipe" ? (
           filtered.length > 0 ? (

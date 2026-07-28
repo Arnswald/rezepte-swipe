@@ -9,7 +9,7 @@
 import Database from "better-sqlite3";
 import { existsSync, mkdirSync } from "fs";
 import { join } from "path";
-import { randomUUID } from "crypto";
+import { randomUUID, scryptSync, randomBytes, timingSafeEqual } from "crypto";
 import { env } from "@/lib/env";
 
 export type Verdict = "like" | "nope" | "super";
@@ -81,6 +81,15 @@ function getDb(): Database.Database {
       PRIMARY KEY (group_id, guest_id)
     );
     CREATE INDEX IF NOT EXISTS idx_group_members_guest ON group_members(guest_id);
+
+    -- v4: echte Accounts (Benutzername + Passwort). Hängt an einem guest_id (= die Identität).
+    CREATE TABLE IF NOT EXISTS accounts (
+      username_norm TEXT PRIMARY KEY,   -- kleingeschrieben, für Eindeutigkeit/Login
+      username      TEXT NOT NULL,       -- Anzeige (Original-Schreibweise)
+      password_hash TEXT NOT NULL,       -- scrypt: "<saltHex>:<hashHex>"
+      guest_id      TEXT NOT NULL UNIQUE,
+      created_at    TEXT NOT NULL
+    );
   `);
   globalForDb.rezepteDb = database;
   return database;
@@ -408,10 +417,79 @@ export function deleteGuestCascade(guestId: string): { verdicts: number; connect
     const verdicts = db.prepare(`DELETE FROM verdicts WHERE guest_id = ?`).run(id).changes;
     const connections = db.prepare(`DELETE FROM connections WHERE guest_a = ? OR guest_b = ?`).run(id, id).changes;
     db.prepare(`DELETE FROM group_members WHERE guest_id = ?`).run(id);
+    db.prepare(`DELETE FROM accounts WHERE guest_id = ?`).run(id);
     const guest = db.prepare(`DELETE FROM guests WHERE guest_id = ?`).run(id).changes;
     return { verdicts, connections, guest };
   });
   return tx(guestId);
+}
+
+// ── v4: Accounts (Benutzername + Passwort) ────────────────────────────────────
+
+function hashPassword(password: string): string {
+  const salt = randomBytes(16);
+  const hash = scryptSync(password, salt, 32);
+  return `${salt.toString("hex")}:${hash.toString("hex")}`;
+}
+
+function verifyPassword(password: string, stored: string): boolean {
+  const [saltHex, hashHex] = stored.split(":");
+  if (!saltHex || !hashHex) return false;
+  const hash = Buffer.from(hashHex, "hex");
+  const test = scryptSync(password, Buffer.from(saltHex, "hex"), hash.length);
+  return hash.length === test.length && timingSafeEqual(hash, test);
+}
+
+export type RegisterResult =
+  | { ok: true; guestId: string; name: string }
+  | { ok: false; reason: "taken" | "invalid" };
+
+/**
+ * Legt einen Account an. Ist `existingGuestId` gesetzt und hat noch keinen Account,
+ * wird er übernommen (bestehende Likes/Gruppen bleiben) — sonst neue Identität.
+ */
+export function registerAccount(username: string, password: string, existingGuestId: string | null, now: string): RegisterResult {
+  const name = username.trim();
+  const norm = name.toLowerCase();
+  if (name.length < 2 || password.length < 4) return { ok: false, reason: "invalid" };
+  const db = getDb();
+  if (db.prepare(`SELECT 1 FROM accounts WHERE username_norm = ?`).get(norm)) return { ok: false, reason: "taken" };
+
+  let guestId = (existingGuestId ?? "").trim();
+  if (guestId && db.prepare(`SELECT 1 FROM accounts WHERE guest_id = ?`).get(guestId)) {
+    guestId = ""; // an dieser ID hängt schon ein Account → neue Identität
+  }
+  if (!guestId) guestId = randomUUID();
+
+  ensureGuest(guestId, name, now);
+  db.prepare(`UPDATE guests SET name = ? WHERE guest_id = ?`).run(name, guestId);
+  db.prepare(`INSERT INTO accounts (username_norm, username, password_hash, guest_id, created_at) VALUES (?, ?, ?, ?, ?)`)
+    .run(norm, name, hashPassword(password), guestId, now);
+  return { ok: true, guestId, name };
+}
+
+export type LoginResult = { ok: true; guestId: string; name: string } | { ok: false };
+
+export function loginAccount(username: string, password: string): LoginResult {
+  const norm = username.trim().toLowerCase();
+  const row = getDb()
+    .prepare(`SELECT username, password_hash, guest_id FROM accounts WHERE username_norm = ?`)
+    .get(norm) as { username: string; password_hash: string; guest_id: string } | undefined;
+  if (!row || !verifyPassword(password, row.password_hash)) return { ok: false };
+  return { ok: true, guestId: row.guest_id, name: row.username };
+}
+
+/** Ob an einer Identität ein Account hängt (für die UI). */
+export function hasAccount(guestId: string): boolean {
+  return !!getDb().prepare(`SELECT 1 FROM accounts WHERE guest_id = ?`).get(guestId);
+}
+
+/** Bewertungen eines Gasts als { slug: verdict } — für Server-Hydration nach Login. */
+export function getVerdictsForGuest(guestId: string): Record<string, Verdict> {
+  const rows = getDb().prepare(`SELECT slug, verdict FROM verdicts WHERE guest_id = ?`).all(guestId) as { slug: string; verdict: Verdict }[];
+  const out: Record<string, Verdict> = {};
+  for (const r of rows) out[r.slug] = r.verdict;
+  return out;
 }
 
 // ── v3.1: Gruppen ─────────────────────────────────────────────────────────────

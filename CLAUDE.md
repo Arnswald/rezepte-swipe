@@ -171,10 +171,15 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
   Freundescodes sind im Admin sichtbar/kopierbar; Personen dort verbindbar/trennbar.
 - **v4 (offen): Live-Match-Session** — gemeinsames Swipen in Echtzeit, beide Seiten
   bekommen das „Match für heute Abend"-Popup sofort (braucht Realtime/Polling).
-- **v4 (offen): Richtiger Login** — Code/Magic-Link statt nur localStorage, damit
-  Identität **geräteübergreifend** hält und die iOS-Safari-7-Tage-Storage-Löschung
-  (greift nur ohne Home-Screen-PWA) umgangen wird. Bewusst zurückgestellt; ggf.
-  später umsetzen, wenn der Freundeskreis wächst / Leute mehrere Geräte nutzen.
+- **v4 (LIVE-fähig, 28.07.2026): Richtiger Login (Pflicht).** `AuthGate` (ersetzt
+  das alte Name-Gate): **Registrieren / Einloggen** mit **Benutzername + Passwort**
+  (kein E-Mail-Dienst; Passwort mit Node-`scrypt` gehasht, Tabelle `accounts`).
+  Beim Registrieren wird ein bestehender anonymer `guestId` übernommen → Likes/
+  Gruppen bleiben. Login gibt Identität **inkl. Server-Bewertungen** zurück; die App
+  hydratisiert beim Öffnen über **`/api/me`** → Stand hält **geräteübergreifend**
+  und übersteht die iOS-Safari-7-Tage-Löschung. „Abmelden" auf der Account-Seite.
+  Routen: `/api/auth/register`, `/api/auth/login`, `/api/me`. guestId bleibt der
+  Bearer (in localStorage); das Passwort ist der Weg, ihn woanders wiederzubekommen.
 - **Offen**: Vorschläge → n8n → Obsidian-Inbox (`01 Inbox/Rezept-Vorschläge.md`).
   (Telegram-Push & n8n-Automationen aktuell **nicht** gewünscht.)
 - **Ideen**: Reset/„nochmal von vorn" pro Gast, saisonale Trending-Gewichtung
@@ -184,13 +189,16 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
 
 | Datei | Zweck |
 |---|---|
-| `src/app/page.tsx` | Name-Gate, 3-Tab-Nav (Swipe/Raster/Account), Deck, Raster (Trending+Suche), Detail-Sheet, AccountView, Deep-Link `?rezept=` |
+| `src/app/page.tsx` | Auth-Gate (Login), 3-Tab-Nav (Swipe/Raster/Account), Deck, Raster (Trending+Suche), Detail-Sheet, AccountView, Deep-Link `?rezept=` |
 | `src/app/admin/page.tsx` | Admin-Auswertung + Personen-Verwaltung (PIN-Gate, Löschen) |
 | `src/app/rezept/[slug]/page.tsx` | Teilbare, server-gerenderte Rezept-Seite (OG-Tags) |
 | `src/components/ShareButton.tsx` | Teilen via `navigator.share`, Fallback Link-Copy |
 | `src/lib/recipes.ts` | Rezept-Parser (+ `getRecipeBySlug` für die Detail-Seite) |
 | `src/lib/db.ts` | better-sqlite3: `verdicts` + `guests`/`connections` + `groups`/`group_members`, Codes/Matches/Trending/Gruppen-Ranking |
 | `src/lib/env.ts` | Env-Zugriff (RECIPES-Pfade, DATA_DIR, ADMIN_PIN, SITE_URL, Webhook) |
+| `src/app/api/auth/register/route.ts` | POST: Account anlegen (Benutzername+Passwort, übernimmt guestId) |
+| `src/app/api/auth/login/route.ts` | POST: Login → Identität + Server-Bewertungen |
+| `src/app/api/me/route.ts` | POST: Server-Stand (Bewertungen, Freundescode) fürs Hydrieren |
 | `src/app/api/verdict/route.ts` | POST: Verdict speichern/löschen (+ `ensureGuest`) |
 | `src/app/api/friends/register/route.ts` | POST: Gast anlegen → Freundescode |
 | `src/app/api/friends/connect/route.ts` | POST: per Code verbinden |
