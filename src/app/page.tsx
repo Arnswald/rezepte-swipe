@@ -6,6 +6,7 @@ import {
   Loader2, ChevronRight, Clock, Users, Flame,
   LayoutGrid, Layers, X, ExternalLink, AlertCircle, Check,
   Heart, Star, RotateCcw, User, Search, Copy, UserPlus, Sparkles, LogOut,
+  CookingPot, UtensilsCrossed, ChefHat, Soup, Share2,
 } from "lucide-react";
 
 // Instagram-Glyph (aus lucide entfernt) als inline-SVG
@@ -975,19 +976,22 @@ function MatchCelebration({
         style={{ background: "radial-gradient(125% 125% at 50% 12%, rgba(189,81,56,0.97), rgba(63,107,67,0.97))" }}
       />
 
-      {/* Schwebende Herzen */}
-      {!prefersReduced && [...Array(9)].map((_, i) => (
-        <motion.div
-          key={i}
-          className="absolute pointer-events-none"
-          style={{ left: `${6 + i * 10.5}%`, bottom: "-8%" }}
-          initial={{ y: 0, opacity: 0 }}
-          animate={{ y: -820 - (i % 3) * 120, opacity: [0, 1, 1, 0] }}
-          transition={{ duration: 2.6 + (i % 4) * 0.4, delay: 0.12 * i, repeat: Infinity, ease: "easeOut" }}
-        >
-          <Heart className="w-6 h-6 text-white/70 fill-white/70" />
-        </motion.div>
-      ))}
+      {/* Schwebende Küchen-Utensilien */}
+      {!prefersReduced && [...Array(9)].map((_, i) => {
+        const Icon = [CookingPot, UtensilsCrossed, ChefHat, Soup][i % 4];
+        return (
+          <motion.div
+            key={i}
+            className="absolute pointer-events-none text-white/75"
+            style={{ left: `${6 + i * 10.5}%`, bottom: "-8%" }}
+            initial={{ y: 0, opacity: 0, rotate: -12 }}
+            animate={{ y: -820 - (i % 3) * 120, opacity: [0, 1, 1, 0], rotate: 12 }}
+            transition={{ duration: 2.6 + (i % 4) * 0.4, delay: 0.12 * i, repeat: Infinity, ease: "easeOut" }}
+          >
+            <Icon className="w-7 h-7" />
+          </motion.div>
+        );
+      })}
 
       <motion.div
         initial={{ scale: prefersReduced ? 1 : 0.7, opacity: 0, y: prefersReduced ? 0 : 20 }}
@@ -1006,7 +1010,7 @@ function MatchCelebration({
           Es ist ein Match!
         </motion.p>
         <p className="text-white/90 text-sm mt-3 font-semibold">
-          {anySuper ? "⭐ Doppel-Superlike" : "❤️ Ihr mögt beide"}
+          {anySuper ? "⭐ Doppel-Superlike" : "🍽️ Ihr mögt beide"}
         </p>
 
         <div className="mt-6 mx-auto w-44 h-44 rounded-[28px] overflow-hidden shadow-2xl ring-4 ring-white/30 bg-black/20">
@@ -1144,6 +1148,16 @@ function AccountView({
   };
   const copyGroupCode = async (c: string) => {
     try { await navigator.clipboard.writeText(c); toast.success("Kopiert", "Gruppencode in der Zwischenablage."); } catch { /* ignore */ }
+  };
+  // Einladungslink: wer ihn öffnet, muss sich einen Account machen und ist dann
+  // automatisch in der Gruppe (Auto-Beitritt über `?gruppe=CODE` beim App-Start).
+  const inviteToGroup = async (code: string, name: string) => {
+    const url = (typeof window !== "undefined" ? window.location.origin : "") + `/?gruppe=${encodeURIComponent(code)}`;
+    const text = `Lass uns gemeinsam Essen planen 🍽️\nTritt meiner Gruppe „${name}" bei:`;
+    if (typeof navigator !== "undefined" && navigator.share) {
+      try { await navigator.share({ title: "Essen planen gemeinsam", text, url }); return; } catch { /* fallthrough */ }
+    }
+    try { await navigator.clipboard.writeText(`${text}\n${url}`); toast.success("Link kopiert", "Füg ihn z.B. in WhatsApp ein."); } catch { /* ignore */ }
   };
 
   const copyCode = async () => {
@@ -1356,9 +1370,15 @@ function AccountView({
                     <LogOut className="w-3.5 h-3.5" />
                   </button>
                 </div>
-                <p className="text-[11px] text-text-muted mt-1 mb-2.5 truncate">
+                <p className="text-[11px] text-text-muted mt-1 mb-2 truncate">
                   {g.members.map((m) => m.name).join(", ")} · {g.memberCount} {g.memberCount === 1 ? "Mitglied" : "Mitglieder"}
                 </p>
+                <button
+                  onClick={() => inviteToGroup(g.code, g.name)}
+                  className="w-full mb-3 py-2 rounded-xl bg-accent/10 text-accent text-xs font-semibold flex items-center justify-center gap-1.5 active:scale-[0.98] transition-transform"
+                >
+                  <Share2 className="w-3.5 h-3.5" /> Einladungslink verschicken
+                </button>
                 {g.matches.length === 0 ? (
                   <p className="text-xs text-text-muted">Noch keine Favoriten in der Gruppe — wischt los!</p>
                 ) : (
@@ -1463,6 +1483,8 @@ export default function RezeptePage() {
   const [match, setMatch] = useState<{ recipe: Recipe; partners: MatchPing[] } | null>(null);
   const dimTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const deepLinkDone = useRef(false);
+  const pendingGroupDone = useRef(false);
+  const toast = useToast();
 
   useEffect(() => {
     setVerdicts(loadVerdicts());
@@ -1488,6 +1510,31 @@ export default function RezeptePage() {
       .then((d) => { if (d.verdicts) { setVerdicts(d.verdicts); replaceVerdicts(d.verdicts); } })
       .catch(() => { /* offline egal */ });
   }, [hydrated, guestId, guestName]);
+
+  // Gruppen-Einladungslink `/?gruppe=CODE`: nach Login automatisch der Gruppe beitreten.
+  useEffect(() => {
+    if (pendingGroupDone.current || !hydrated || !guestId || !guestName) return;
+    let code = "";
+    try { code = new URLSearchParams(window.location.search).get("gruppe") || ""; } catch { /* ignore */ }
+    if (!code) { pendingGroupDone.current = true; return; }
+    pendingGroupDone.current = true;
+    fetch("/api/groups", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "join", guestId, name: guestName, code }),
+    })
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.ok) {
+          toast.success(d.already ? "Schon in der Gruppe" : "Gruppe beigetreten! 🎉", `Ihr plant jetzt gemeinsam in „${d.group?.name ?? "der Gruppe"}".`);
+          setMode("account");
+        } else if (d.error) {
+          toast.error("Beitritt fehlgeschlagen", d.error);
+        }
+      })
+      .catch(() => { /* offline egal */ })
+      .finally(() => { try { window.history.replaceState(null, "", window.location.pathname); } catch { /* ignore */ } });
+  }, [hydrated, guestId, guestName, toast]);
 
   // Abmelden: lokale Identität + Cache löschen → Auth-Gate erscheint wieder.
   const logout = useCallback(() => {
