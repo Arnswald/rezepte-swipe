@@ -6,8 +6,9 @@ import {
   Loader2, ChevronRight, Clock, Users, Flame,
   LayoutGrid, Layers, X, ExternalLink, AlertCircle, Check,
   Heart, Star, RotateCcw, User, Search, Copy, UserPlus, Sparkles, LogOut,
-  CookingPot, UtensilsCrossed, ChefHat, Soup, Share2, ImagePlus, Mic, Square, Pencil,
+  CookingPot, UtensilsCrossed, ChefHat, Soup, Share2, ImagePlus, Mic, Square, Pencil, BookOpen,
 } from "lucide-react";
+import { LogoMark } from "@/components/LogoMark";
 
 // Instagram-Glyph (aus lucide entfernt) als inline-SVG
 function InstagramIcon({ className }: { className?: string }) {
@@ -2072,28 +2073,35 @@ export default function RezeptePage() {
 
   return (
     <div className="mx-auto w-full max-w-3xl h-[100dvh] flex flex-col px-4 pt-[max(env(safe-area-inset-top),0.75rem)] pb-[max(env(safe-area-inset-bottom),1.75rem)]">
-      {/* Header — Titel links, 3-Tab-Switcher mittig */}
-      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-2 shrink-0">
-        <h1 className="justify-self-start text-[1.5rem] font-extrabold text-text-primary tracking-tight leading-none">Rezepte</h1>
+      {/* Header — Logo-Lockup links, 3-Tab-Switcher mittig (aktiver Tab zeigt Label) */}
+      <div className="grid grid-cols-[auto_1fr_auto] items-center gap-2 shrink-0">
+        <div className="justify-self-start flex items-center gap-1.5">
+          <LogoMark size={30} className="shrink-0" />
+          <span className="text-[1.3rem] font-extrabold text-text-primary tracking-tight leading-none">Rezepte</span>
+        </div>
         <div className="justify-self-center flex items-center rounded-full bg-surface-elevated p-1 gap-0.5 border border-border">
           {([
-            ["swipe", Layers, "Swipe"],
-            ["grid", LayoutGrid, "Raster"],
-            ["account", User, "Account"],
-          ] as const).map(([m, Icon, label]) => (
-            <button
-              key={m}
-              onClick={() => setMode(m)}
-              aria-label={label}
-              className={`px-3.5 py-1.5 rounded-full transition-colors ${
-                mode === m ? "bg-surface text-text-primary shadow-sm" : "text-text-muted"
-              }`}
-            >
-              <Icon className="w-4 h-4" />
-            </button>
-          ))}
+            ["swipe", Sparkles, "Entdecken"],
+            ["grid", BookOpen, "Kochbuch"],
+            ["account", User, "Profil"],
+          ] as const).map(([m, Icon, label]) => {
+            const active = mode === m;
+            return (
+              <button
+                key={m}
+                onClick={() => setMode(m)}
+                aria-label={label}
+                className={`flex items-center gap-1.5 py-1.5 rounded-full transition-all ${
+                  active ? "bg-surface text-text-primary shadow-sm px-3" : "text-text-muted px-2.5"
+                }`}
+              >
+                <Icon className="w-4 h-4 shrink-0" />
+                {active && <span className="text-[13px] font-semibold leading-none">{label}</span>}
+              </button>
+            );
+          })}
         </div>
-        <div className="justify-self-end" />
+        <div className="justify-self-end w-1" />
       </div>
 
       {/* Kategorie-Filter — dezent, eine Reihe (nicht im Account, nicht im Abend-Modus) */}

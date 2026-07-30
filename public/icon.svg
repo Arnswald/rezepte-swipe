@@ -1,20 +1,8 @@
-<svg viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Rezepte">
-  <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#c9583d"/>
-      <stop offset="1" stop-color="#ac4029"/>
-    </linearGradient>
-  </defs>
-  <rect width="512" height="512" rx="115" fill="url(#bg)"/>
-  <g stroke="#fbf3e7" stroke-width="26" stroke-linecap="round" stroke-linejoin="round" fill="none">
-    <!-- Gabel -->
-    <line x1="163" y1="132" x2="163" y2="212"/>
-    <line x1="199" y1="128" x2="199" y2="212"/>
-    <line x1="235" y1="132" x2="235" y2="212"/>
-    <path d="M163 212 Q199 244 235 212"/>
-    <line x1="199" y1="244" x2="199" y2="384"/>
-    <!-- Messer -->
-    <path d="M330 128 Q368 168 344 250" fill="#fbf3e7" stroke="none"/>
-    <line x1="337" y1="240" x2="337" y2="384"/>
-  </g>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect width="100" height="100" rx="24" fill="#bd5138"/>
+  <path d="M24 76 Q36 34 78 32" fill="none" stroke="#faf3e8" stroke-width="4.5" stroke-linecap="round" opacity="0.32"/>
+  <line x1="40" y1="20" x2="40" y2="40" stroke="#faf3e8" stroke-width="4.5" stroke-linecap="round"/>
+  <line x1="50" y1="20" x2="50" y2="40" stroke="#faf3e8" stroke-width="4.5" stroke-linecap="round"/>
+  <line x1="60" y1="20" x2="60" y2="40" stroke="#faf3e8" stroke-width="4.5" stroke-linecap="round"/>
+  <path d="M40 40 Q50 52 50 58" fill="none" stroke="#faf3e8" stroke-width="4.5" stroke-linecap="round"/>
+  <path d="M60 40 Q50 52 50 58" fill="none" stroke="#faf3e8" stroke-width="4.5" stroke-linecap="round"/>
+  <line x1="50" y1="56" x2="50" y2="84" stroke="#faf3e8" stroke-width="8" stroke-linecap="round"/></svg>
