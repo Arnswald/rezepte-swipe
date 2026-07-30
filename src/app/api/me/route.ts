@@ -4,11 +4,11 @@
  * damit die App beim Öffnen — auch nach Login auf einem neuen Gerät — den
  * kompletten Stand herstellen kann.
  *
- * Body: { guestId, name? }  → { verdicts, ratings, dislikes, friendCode }
+ * Body: { guestId, name? }  → { verdicts, ratings, dislikes, cooked, connections, friendCode }
  */
 
 import { NextResponse } from "next/server";
-import { ensureGuest, getVerdictsForGuest, getRatingsForGuest, getDislikes } from "@/lib/db";
+import { ensureGuest, getVerdictsForGuest, getRatingsForGuest, getDislikes, getCookEventsForGuest, getConnections } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -23,6 +23,8 @@ export async function POST(req: Request) {
       verdicts: getVerdictsForGuest(guestId),
       ratings: getRatingsForGuest(guestId),
       dislikes: getDislikes(guestId),
+      cooked: getCookEventsForGuest(guestId),
+      connections: getConnections(guestId).map((g) => ({ guestId: g.guest_id, name: g.name })),
       friendCode: guest.friend_code,
     });
   } catch (err) {

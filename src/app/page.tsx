@@ -102,6 +102,17 @@ function replaceDislikes(list: string[]) {
   try { localStorage.setItem(DISLIKE_KEY, JSON.stringify(list)); } catch { /* ignore */ }
 }
 
+// YYYY-MM-DD → TT.MM.JJJJ (für den Koch-Verlauf)
+function fmtDay(iso: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  return m ? `${m[3]}.${m[2]}.${m[1]}` : iso;
+}
+// Heutiges Datum als YYYY-MM-DD (lokal)
+function todayISO(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 // ── Empfehlungslogik (zutatenbasiert) ─────────────────────────
 // Durchsuchbarer Text eines Rezepts (Name + Beschreibung + Zutaten), kleingeschrieben.
 function ingredientBlob(r: Recipe): string {
@@ -126,6 +137,14 @@ function recipeScore(r: Recipe, profile: Record<string, number>, dislikes: strin
 
 // Frisch entstandenes Match (für die „Es ist ein Match!"-Animation)
 interface MatchPing { name: string; theirs: Verdict; bothSuper: boolean }
+
+// Koch-Verlauf-Eintrag ("bereits gekocht", optional mit wem)
+interface CookEvent {
+  id: number; slug: string; recipeName: string; category: string;
+  cookedOn: string; withGuest: string | null; withName: string | null; isAuthor: boolean;
+}
+// Verbundene Person (fürs „mit wem"-Dropdown)
+interface Friend { guestId: string; name: string }
 
 // Verdict ans Backend schicken. Gibt die Antwort zurück (u.a. frische Matches);
 // bleibt aber unkritisch — die UI hängt nicht davon ab.
@@ -633,13 +652,20 @@ function StarRating({ value, onChange, size = 30 }: { value: number; onChange: (
 
 function RecipeDetail({
   r, onClose, verdict, onVerdict, rating = 0, onRate, dislikeHitList = [],
+  friends = [], cookEntries = [], onAddCook, onDeleteCook,
 }: {
   r: Recipe; onClose: () => void;
   verdict?: Verdict; onVerdict?: (v: Verdict) => void;
   rating?: number; onRate?: (n: number | null) => void;
   dislikeHitList?: string[];
+  friends?: Friend[];
+  cookEntries?: CookEvent[];
+  onAddCook?: (partnerGuest: string | null, cookedOn: string) => void;
+  onDeleteCook?: (id: number) => void;
 }) {
   const [checked, setChecked] = useState<Set<string>>(new Set());
+  const [cookPartner, setCookPartner] = useState("");
+  const [cookDate, setCookDate] = useState(todayISO());
   const prefersReduced = useReducedMotion();
 
   useEffect(() => {
@@ -742,6 +768,56 @@ function RecipeDetail({
                     Schon gekocht? Bewerte es
                   </p>
                   <StarRating value={rating} onChange={onRate} />
+                </div>
+              )}
+              {onAddCook && (
+                <div className="pt-1 border-t border-border/70">
+                  <p className="text-[11px] font-semibold text-text-muted uppercase tracking-wide mb-2 mt-3">
+                    Bereits gekocht — festhalten
+                  </p>
+                  {cookEntries.length > 0 && (
+                    <div className="space-y-1.5 mb-2.5">
+                      {cookEntries.map((e) => (
+                        <div key={e.id} className="flex items-center gap-2 text-xs">
+                          <CookingPot className="w-3.5 h-3.5 text-accent shrink-0" />
+                          <span className="text-text-secondary">
+                            {fmtDay(e.cookedOn)}{e.withName ? ` · mit ${e.withName}` : " · alleine"}
+                          </span>
+                          {e.isAuthor && onDeleteCook && (
+                            <button onClick={() => onDeleteCook(e.id)} aria-label="Eintrag entfernen"
+                              className="ml-auto text-text-muted active:scale-90 transition-transform">
+                              <X className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex items-center gap-1.5">
+                    <select
+                      value={cookPartner}
+                      onChange={(e) => setCookPartner(e.target.value)}
+                      className="flex-1 min-w-0 text-xs bg-surface border border-border rounded-lg px-2 py-1.5 text-text-secondary"
+                    >
+                      <option value="">Alleine</option>
+                      {friends.map((f) => (
+                        <option key={f.guestId} value={f.guestId}>mit {f.name}</option>
+                      ))}
+                    </select>
+                    <input
+                      type="date"
+                      value={cookDate}
+                      max={todayISO()}
+                      onChange={(e) => setCookDate(e.target.value)}
+                      className="text-xs bg-surface border border-border rounded-lg px-2 py-1.5 text-text-secondary"
+                    />
+                    <button
+                      onClick={() => onAddCook(cookPartner || null, cookDate || todayISO())}
+                      className="shrink-0 text-xs font-semibold text-white bg-accent px-3 py-1.5 rounded-lg active:scale-95 transition-transform"
+                    >
+                      Eintragen
+                    </button>
+                  </div>
                 </div>
               )}
               {dislikeHitList.length > 0 && (
@@ -1430,7 +1506,7 @@ interface GroupMatchUI { slug: string; recipeName: string; category: string; cou
 interface GroupViewUI { id: string; name: string; code: string; members: { guestId: string; name: string }[]; memberCount: number; matches: GroupMatchUI[]; evening: { plan: GroupMatchUI[]; myPicks: number } }
 
 function AccountView({
-  guestId, guestName, recipes, verdicts, ratings, dislikes, onOpen, onSuggest, onLogout, onPlanEvening, onSaveDislikes,
+  guestId, guestName, recipes, verdicts, ratings, dislikes, cookEvents, onOpen, onSuggest, onLogout, onPlanEvening, onSaveDislikes,
 }: {
   guestId: string;
   guestName: string;
@@ -1438,6 +1514,7 @@ function AccountView({
   verdicts: Record<string, Verdict>;
   ratings: Record<string, number>;
   dislikes: string[];
+  cookEvents: CookEvent[];
   onOpen: (r: Recipe) => void;
   onSuggest: () => void;
   onLogout: () => void;
@@ -1471,18 +1548,38 @@ function AccountView({
     [verdicts, bySlug],
   );
 
-  // „Schon gekocht" — Gerichte mit Sterne-Bewertung, beste zuerst.
-  const cooked = useMemo(
-    () =>
-      Object.entries(ratings)
-        .map(([slug, stars]) => ({ r: bySlug.get(slug), stars }))
-        .filter((x): x is { r: Recipe; stars: number } => !!x.r)
-        .sort((a, b) => b.stars - a.stars || a.r.name.localeCompare(b.r.name)),
-    [ratings, bySlug],
-  );
+  // „Schon gekocht" — Gerichte mit Sterne-Bewertung ODER Koch-Verlauf, je Gericht
+  // ein Eintrag: Sterne + zuletzt gekocht (Datum) + mit wem.
+  const cooked = useMemo(() => {
+    const bySlugMap = new Map<string, { r: Recipe; stars: number; lastCookedOn: string | null; withNames: string[] }>();
+    const ensure = (slug: string) => {
+      let e = bySlugMap.get(slug);
+      if (!e) {
+        const r = bySlug.get(slug);
+        if (!r) return null;
+        e = { r, stars: 0, lastCookedOn: null, withNames: [] };
+        bySlugMap.set(slug, e);
+      }
+      return e;
+    };
+    for (const [slug, stars] of Object.entries(ratings)) {
+      const e = ensure(slug);
+      if (e) e.stars = stars;
+    }
+    for (const ce of cookEvents) {
+      const e = ensure(ce.slug);
+      if (!e) continue;
+      if (!e.lastCookedOn || ce.cookedOn > e.lastCookedOn) e.lastCookedOn = ce.cookedOn;
+      if (ce.withName && !e.withNames.includes(ce.withName)) e.withNames.push(ce.withName);
+    }
+    return [...bySlugMap.values()].sort(
+      (a, b) => (b.lastCookedOn ?? "").localeCompare(a.lastCookedOn ?? "") || b.stars - a.stars || a.r.name.localeCompare(b.r.name),
+    );
+  }, [ratings, cookEvents, bySlug]);
 
   // „Was ich nicht mag" — lokaler Editier-Zustand (Chips + Eingabe).
   const [dislikeInput, setDislikeInput] = useState("");
+  const [favsExpanded, setFavsExpanded] = useState(false);
   const addDislike = (raw: string) => {
     const v = raw.trim().toLowerCase().replace(/,+$/, "");
     if (v.length < 2) return;
@@ -1619,15 +1716,15 @@ function AccountView({
   };
 
   return (
-    <div className="space-y-6 pb-4">
+    <div className="flex flex-col gap-6 pb-4">
       {/* Begrüßung */}
-      <div>
+      <div className="order-1">
         <h2 className="text-xl font-extrabold text-text-primary tracking-tight">Hey {guestName} 👋</h2>
         <p className="text-sm text-text-muted mt-0.5">Dein Account, deine Matches und Favoriten.</p>
       </div>
 
       {/* Freundescode */}
-      <div className="rounded-2xl border border-border bg-surface p-4">
+      <div className="order-7 rounded-2xl border border-border bg-surface p-4">
         <p className="text-xs font-semibold text-text-muted uppercase tracking-wide">Dein Freundescode</p>
         <div className="flex items-center gap-2 mt-2">
           <div className="flex-1 text-2xl font-extrabold tracking-[0.12em] text-accent tabular-nums select-all">
@@ -1655,7 +1752,7 @@ function AccountView({
       </div>
 
       {/* Verbinden */}
-      <div className="rounded-2xl border border-border bg-surface p-4">
+      <div className="order-8 rounded-2xl border border-border bg-surface p-4">
         <p className="text-xs font-semibold text-text-muted uppercase tracking-wide flex items-center gap-1.5">
           <UserPlus className="w-3.5 h-3.5" /> Mit jemandem verbinden
         </p>
@@ -1681,7 +1778,7 @@ function AccountView({
       </div>
 
       {/* Matches */}
-      <div>
+      <div className="order-2">
         <h3 className="text-sm font-bold text-text-primary flex items-center gap-1.5 mb-2">
           <Heart className="w-4 h-4 text-accent fill-accent" /> Eure Matches
         </h3>
@@ -1732,7 +1829,7 @@ function AccountView({
       </div>
 
       {/* Gruppen */}
-      <div>
+      <div className="order-6">
         <h3 className="text-sm font-bold text-text-primary flex items-center gap-1.5 mb-2">
           <Users className="w-4 h-4 text-accent" /> Gruppen
           {groups.length > 0 && <span className="text-[11px] font-normal text-text-muted tabular-nums">({groups.length})</span>}
@@ -1861,7 +1958,7 @@ function AccountView({
       </div>
 
       {/* Meine Favoriten */}
-      <div>
+      <div className="order-3">
         <h3 className="text-sm font-bold text-text-primary flex items-center gap-1.5 mb-2">
           <Star className="w-4 h-4 text-[#d99a2b] fill-[#d99a2b]" /> Meine Favoriten
           {favs.length > 0 && <span className="text-[11px] font-normal text-text-muted tabular-nums">({favs.length})</span>}
@@ -1871,38 +1968,48 @@ function AccountView({
             Noch nichts gemerkt. Wisch im Swipe-Tab nach rechts, was dir schmeckt.
           </p>
         ) : (
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-            {favs.map(({ r, v }) => (
+          <>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+              {(favsExpanded ? favs : favs.slice(0, 10)).map(({ r, v }) => (
+                <button
+                  key={r.slug}
+                  onClick={() => onOpen(r)}
+                  className="relative rounded-xl overflow-hidden aspect-[4/3] bg-surface-elevated text-left active:scale-[0.98] transition-transform"
+                >
+                  <RecipeImage r={r} w={400} className="absolute inset-0 w-full h-full object-cover" />
+                  <div className="absolute inset-x-0 bottom-0 h-3/5 bg-gradient-to-t from-black/85 to-transparent" />
+                  {v === "super" && (
+                    <span className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-[#d99a2b] flex items-center justify-center"><Star className="w-3 h-3 fill-white text-white" /></span>
+                  )}
+                  <p className="absolute inset-x-0 bottom-0 p-2 text-white text-[11px] font-semibold leading-tight line-clamp-2 drop-shadow">{r.name}</p>
+                </button>
+              ))}
+            </div>
+            {favs.length > 10 && (
               <button
-                key={r.slug}
-                onClick={() => onOpen(r)}
-                className="relative rounded-xl overflow-hidden aspect-[4/3] bg-surface-elevated text-left active:scale-[0.98] transition-transform"
+                onClick={() => setFavsExpanded((v) => !v)}
+                className="mt-2.5 w-full py-2.5 rounded-xl bg-surface-elevated border border-border text-text-secondary text-xs font-semibold active:scale-[0.98] transition-transform"
               >
-                <RecipeImage r={r} w={400} className="absolute inset-0 w-full h-full object-cover" />
-                <div className="absolute inset-x-0 bottom-0 h-3/5 bg-gradient-to-t from-black/85 to-transparent" />
-                {v === "super" && (
-                  <span className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-[#d99a2b] flex items-center justify-center"><Star className="w-3 h-3 fill-white text-white" /></span>
-                )}
-                <p className="absolute inset-x-0 bottom-0 p-2 text-white text-[11px] font-semibold leading-tight line-clamp-2 drop-shadow">{r.name}</p>
+                {favsExpanded ? "Weniger anzeigen" : `Alle ${favs.length} anzeigen`}
               </button>
-            ))}
-          </div>
+            )}
+          </>
         )}
       </div>
 
-      {/* Schon gekocht (Sterne-Bewertungen) */}
-      <div>
+      {/* Schon gekocht (Sterne + Koch-Verlauf) */}
+      <div className="order-4">
         <h3 className="text-sm font-bold text-text-primary flex items-center gap-1.5 mb-2">
           <CookingPot className="w-4 h-4 text-accent" /> Schon gekocht
           {cooked.length > 0 && <span className="text-[11px] font-normal text-text-muted tabular-nums">({cooked.length})</span>}
         </h3>
         {cooked.length === 0 ? (
           <p className="text-sm text-text-muted bg-surface border border-border rounded-2xl p-4">
-            Noch nichts bewertet. Öffne ein Gericht und vergib Sterne, wenn du&apos;s gekocht hast.
+            Noch nichts eingetragen. Öffne ein Gericht → Sterne vergeben oder „bereits gekocht" festhalten (auch mit wem).
           </p>
         ) : (
           <div className="space-y-2">
-            {cooked.map(({ r, stars }) => (
+            {cooked.map(({ r, stars, lastCookedOn, withNames }) => (
               <button
                 key={r.slug}
                 onClick={() => onOpen(r)}
@@ -1913,11 +2020,18 @@ function AccountView({
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-semibold text-text-primary truncate">{r.name}</p>
-                  <div className="flex items-center gap-0.5 mt-0.5">
-                    {[1, 2, 3, 4, 5].map((n) => (
-                      <Star key={n} className={`w-3.5 h-3.5 ${n <= stars ? "text-[#d99a2b]" : "text-text-muted/40"}`} fill={n <= stars ? "#d99a2b" : "none"} />
-                    ))}
-                  </div>
+                  {stars > 0 && (
+                    <div className="flex items-center gap-0.5 mt-0.5">
+                      {[1, 2, 3, 4, 5].map((n) => (
+                        <Star key={n} className={`w-3.5 h-3.5 ${n <= stars ? "text-[#d99a2b]" : "text-text-muted/40"}`} fill={n <= stars ? "#d99a2b" : "none"} />
+                      ))}
+                    </div>
+                  )}
+                  {lastCookedOn && (
+                    <p className="text-[11px] text-text-muted mt-0.5 truncate">
+                      Zuletzt {fmtDay(lastCookedOn)}{withNames.length > 0 ? ` · mit ${withNames.join(", ")}` : ""}
+                    </p>
+                  )}
                 </div>
               </button>
             ))}
@@ -1926,7 +2040,7 @@ function AccountView({
       </div>
 
       {/* Was ich nicht mag (schlank) */}
-      <div>
+      <div className="order-9">
         <h3 className="text-sm font-bold text-text-primary flex items-center gap-1.5 mb-1">
           <X className="w-4 h-4 text-[#bd5138]" /> Was ich nicht mag
         </h3>
@@ -1964,7 +2078,7 @@ function AccountView({
       {/* Vorschlag */}
       <button
         onClick={onSuggest}
-        className="w-full py-3 rounded-xl bg-surface-elevated border border-border text-text-secondary text-sm font-semibold active:scale-[0.98] transition-transform"
+        className="order-5 w-full py-3 rounded-xl bg-accent/10 border border-accent/25 text-accent text-sm font-semibold active:scale-[0.98] transition-transform"
       >
         + Rezept einreichen
       </button>
@@ -1972,7 +2086,7 @@ function AccountView({
       {/* Abmelden */}
       <button
         onClick={onLogout}
-        className="w-full py-2.5 rounded-xl text-text-muted text-xs font-medium flex items-center justify-center gap-1.5 active:scale-[0.98] transition-transform"
+        className="order-10 w-full py-2.5 rounded-xl text-text-muted text-xs font-medium flex items-center justify-center gap-1.5 active:scale-[0.98] transition-transform"
       >
         <LogOut className="w-3.5 h-3.5" /> Abmelden
       </button>
@@ -1995,6 +2109,8 @@ export default function RezeptePage() {
   const [verdicts, setVerdicts] = useState<Record<string, Verdict>>({});
   const [ratings, setRatings] = useState<Record<string, number>>({});
   const [dislikes, setDislikes] = useState<string[]>([]);
+  const [cookEvents, setCookEvents] = useState<CookEvent[]>([]);
+  const [friends, setFriends] = useState<Friend[]>([]);
   const [history, setHistory] = useState<string[]>([]);
   const [deckList, setDeckList] = useState<Recipe[]>([]);
   const [deckMode, setDeckMode] = useState<"new" | "all">("new"); // new = nur ungeswipte, all = alles außer „nö"
@@ -2055,6 +2171,8 @@ export default function RezeptePage() {
       .then((d) => {
         if (d.ratings) { setRatings(d.ratings); replaceRatings(d.ratings); }
         if (Array.isArray(d.dislikes)) { setDislikes(d.dislikes); replaceDislikes(d.dislikes); }
+        if (Array.isArray(d.cooked)) setCookEvents(d.cooked);
+        if (Array.isArray(d.connections)) setFriends(d.connections);
         if (!d.verdicts) return;
         setVerdicts(d.verdicts);
         replaceVerdicts(d.verdicts);
@@ -2099,7 +2217,7 @@ export default function RezeptePage() {
   const logout = useCallback(() => {
     try { localStorage.removeItem(NAME_KEY); localStorage.removeItem(ID_KEY); localStorage.removeItem(FAV_KEY); localStorage.removeItem(RATE_KEY); localStorage.removeItem(DISLIKE_KEY); } catch { /* ignore */ }
     startedRef.current = false; setDeckList([]);
-    setGuestName(null); setGuestId(""); setVerdicts({}); setRatings({}); setDislikes([]); setHistory([]); setIndex(0); setMode("swipe");
+    setGuestName(null); setGuestId(""); setVerdicts({}); setRatings({}); setDislikes([]); setCookEvents([]); setFriends([]); setHistory([]); setIndex(0); setMode("swipe");
   }, []);
 
   const handleVerdict = useCallback((r: Recipe, v: Verdict) => {
@@ -2158,6 +2276,25 @@ export default function RezeptePage() {
         body: JSON.stringify({ guestId, name: guestName, slug: r.slug, recipeName: r.name, category: r.category, stars }),
       }).catch(() => { /* offline egal */ });
     }
+  }, [guestId, guestName]);
+
+  // Koch-Verlauf: „bereits gekocht" eintragen / entfernen (Server ist die Quelle).
+  const addCook = useCallback((r: Recipe, partnerGuest: string | null, cookedOn: string) => {
+    if (!guestId || !guestName) return;
+    fetch("/api/cooked", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ guestId, name: guestName, action: "add", slug: r.slug, recipeName: r.name, category: r.category, partnerGuest: partnerGuest || null, cookedOn }),
+    }).then((res) => res.json()).then((d) => { if (Array.isArray(d.cooked)) setCookEvents(d.cooked); }).catch(() => {});
+  }, [guestId, guestName]);
+
+  const deleteCook = useCallback((id: number) => {
+    if (!guestId || !guestName) return;
+    fetch("/api/cooked", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ guestId, name: guestName, action: "remove", id }),
+    }).then((res) => res.json()).then((d) => { if (Array.isArray(d.cooked)) setCookEvents(d.cooked); }).catch(() => {});
   }, [guestId, guestName]);
 
   // „Was ich nicht mag" speichern (lokal + Server).
@@ -2474,6 +2611,7 @@ export default function RezeptePage() {
             verdicts={verdicts}
             ratings={ratings}
             dislikes={dislikes}
+            cookEvents={cookEvents}
             onOpen={setDetail}
             onSuggest={() => setSuggestOpen(true)}
             onLogout={logout}
@@ -2632,6 +2770,10 @@ export default function RezeptePage() {
             rating={ratings[detail.slug] ?? 0}
             onRate={(n) => handleRating(detail, n)}
             dislikeHitList={dislikeHits(detail, dislikes)}
+            friends={friends}
+            cookEntries={cookEvents.filter((e) => e.slug === detail.slug)}
+            onAddCook={(partnerGuest, cookedOn) => addCook(detail, partnerGuest, cookedOn)}
+            onDeleteCook={deleteCook}
           />
         )}
       </AnimatePresence>

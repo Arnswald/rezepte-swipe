@@ -27,3 +27,6 @@ npm-debug.log*
 # editor
 .vscode/
 .idea/
+
+# Generierte Anleitung (nicht committen)
+Rezepte-Anleitung.pdf

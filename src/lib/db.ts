@@ -125,6 +125,21 @@ function getDb(): Database.Database {
       dislikes   TEXT NOT NULL DEFAULT '',
       updated_at TEXT NOT NULL
     );
+
+    -- v9: Koch-Verlauf — "bereits gekocht" (optional MIT wem + Datum). Mehrere
+    -- Einträge pro Gericht (Verlauf). Sichtbar für Autor UND Partner.
+    CREATE TABLE IF NOT EXISTS cook_events (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      slug          TEXT NOT NULL,
+      recipe_name   TEXT NOT NULL DEFAULT '',
+      category      TEXT NOT NULL DEFAULT '',
+      author_guest  TEXT NOT NULL,
+      partner_guest TEXT,            -- NULL = alleine gekocht
+      cooked_on     TEXT NOT NULL,   -- YYYY-MM-DD
+      created_at    TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_cook_author  ON cook_events(author_guest);
+    CREATE INDEX IF NOT EXISTS idx_cook_partner ON cook_events(partner_guest);
   `);
   globalForDb.rezepteDb = database;
   return database;
@@ -461,6 +476,7 @@ export function deleteGuestCascade(guestId: string): { verdicts: number; connect
     db.prepare(`DELETE FROM evening_picks WHERE guest_id = ?`).run(id);
     db.prepare(`DELETE FROM ratings WHERE guest_id = ?`).run(id);
     db.prepare(`DELETE FROM preferences WHERE guest_id = ?`).run(id);
+    db.prepare(`DELETE FROM cook_events WHERE author_guest = ? OR partner_guest = ?`).run(id, id);
     db.prepare(`DELETE FROM accounts WHERE guest_id = ?`).run(id);
     const guest = db.prepare(`DELETE FROM guests WHERE guest_id = ?`).run(id).changes;
     return { verdicts, connections, guest };
@@ -598,6 +614,62 @@ export function getDislikes(guestId: string): string[] {
   const row = getDb().prepare(`SELECT dislikes FROM preferences WHERE guest_id = ?`).get(guestId) as { dislikes: string } | undefined;
   if (!row?.dislikes) return [];
   return row.dislikes.split(",").map((d) => d.trim()).filter(Boolean);
+}
+
+// ── v9: Koch-Verlauf ("bereits gekocht", optional mit wem) ─────────────────────
+
+export interface CookEvent {
+  id: number;
+  slug: string;
+  recipeName: string;
+  category: string;
+  cookedOn: string;              // YYYY-MM-DD
+  withGuest: string | null;      // die andere Person (aus Sicht des Abfragenden)
+  withName: string | null;
+  isAuthor: boolean;             // hat der Abfragende den Eintrag angelegt?
+}
+
+/** Legt einen Koch-Eintrag an. partnerGuest null = alleine. Gibt die neue id zurück. */
+export function addCookEvent(v: {
+  authorGuest: string; slug: string; recipeName: string; category: string;
+  partnerGuest: string | null; cookedOn: string; now: string;
+}): number {
+  const info = getDb().prepare(`
+    INSERT INTO cook_events (slug, recipe_name, category, author_guest, partner_guest, cooked_on, created_at)
+    VALUES (@slug, @recipeName, @category, @authorGuest, @partnerGuest, @cookedOn, @now)
+  `).run(v);
+  return Number(info.lastInsertRowid);
+}
+
+/** Löscht einen Koch-Eintrag — nur der Autor darf. */
+export function deleteCookEvent(id: number, guestId: string): { removed: number } {
+  return { removed: getDb().prepare(`DELETE FROM cook_events WHERE id = ? AND author_guest = ?`).run(id, guestId).changes };
+}
+
+/** Alle Koch-Einträge, in denen der Gast Autor ODER Partner ist (neueste zuerst). */
+export function getCookEventsForGuest(guestId: string): CookEvent[] {
+  const rows = getDb().prepare(`
+    SELECT ce.id, ce.slug, ce.recipe_name AS recipeName, ce.category, ce.cooked_on AS cookedOn,
+           ce.author_guest AS authorGuest, ce.partner_guest AS partnerGuest,
+           ga.name AS authorName, gp.name AS partnerName
+    FROM cook_events ce
+    LEFT JOIN guests ga ON ga.guest_id = ce.author_guest
+    LEFT JOIN guests gp ON gp.guest_id = ce.partner_guest
+    WHERE ce.author_guest = ? OR ce.partner_guest = ?
+    ORDER BY ce.cooked_on DESC, ce.id DESC
+  `).all(guestId, guestId) as {
+    id: number; slug: string; recipeName: string; category: string; cookedOn: string;
+    authorGuest: string; partnerGuest: string | null; authorName: string | null; partnerName: string | null;
+  }[];
+  return rows.map((r) => {
+    const isAuthor = r.authorGuest === guestId;
+    return {
+      id: r.id, slug: r.slug, recipeName: r.recipeName, category: r.category, cookedOn: r.cookedOn,
+      withGuest: isAuthor ? r.partnerGuest : r.authorGuest,
+      withName: isAuthor ? r.partnerName : r.authorName,
+      isAuthor,
+    };
+  });
 }
 
 // ── v3.1: Gruppen ─────────────────────────────────────────────────────────────
