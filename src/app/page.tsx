@@ -906,6 +906,7 @@ function SuggestSheet({ onClose, defaultName }: { onClose: () => void; defaultNa
   const [sending, setSending] = useState(false);
   const [mode, setMode] = useState<"text" | "audio">("text");
   const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
+  const [showImageReminder, setShowImageReminder] = useState(false);
 
   useEffect(() => {
     document.body.style.overflow = "hidden";
@@ -919,7 +920,13 @@ function SuggestSheet({ onClose, defaultName }: { onClose: () => void; defaultNa
 
   const inputCls = "w-full px-3 py-2.5 rounded-xl bg-surface-elevated border border-border text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent";
 
-  const submit = async () => {
+  // Bei Sprachnachricht ohne Foto einmal freundlich erinnern (man kann trotzdem absenden).
+  const handleSubmit = () => {
+    if (mode === "audio" && !imageFile) { setShowImageReminder(true); return; }
+    doSubmit();
+  };
+
+  const doSubmit = async () => {
     const fd = new FormData();
     fd.append("mode", mode);
     fd.append("submittedBy", submitter);
@@ -1061,13 +1068,46 @@ function SuggestSheet({ onClose, defaultName }: { onClose: () => void; defaultNa
         </div>
 
         <button
-          onClick={submit}
+          onClick={handleSubmit}
           disabled={sending || (mode === "audio" ? !audioBlob : !name.trim())}
           className="w-full py-3 rounded-xl bg-accent text-white text-sm font-semibold active:scale-[0.98] transition-transform disabled:opacity-50 flex items-center justify-center gap-2 sticky bottom-0"
         >
           {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
           {sending ? "Sende…" : mode === "audio" ? "Sprachnachricht absenden" : "Rezept absenden"}
         </button>
+
+        {/* Foto-Erinnerung (nur Sprachnachricht ohne Bild) */}
+        {showImageReminder && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+            className="absolute inset-0 z-20 flex items-end justify-center bg-black/40 sm:rounded-2xl"
+            onClick={() => setShowImageReminder(false)}
+          >
+            <motion.div
+              initial={{ y: prefersReduced ? 0 : 30 }} animate={{ y: 0 }}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full bg-surface border-t border-border rounded-t-2xl sm:rounded-2xl p-5 space-y-3 text-center"
+            >
+              <div className="text-3xl">📸</div>
+              <div>
+                <h3 className="text-base font-bold text-text-primary">Hast du ein Foto vom Gericht?</h3>
+                <p className="text-xs text-text-muted mt-1 leading-relaxed">Ein Bild macht das Rezept viel schöner — kein Muss. Sonst erstellt Christian automatisch eins.</p>
+              </div>
+              <button
+                onClick={() => setShowImageReminder(false)}
+                className="w-full py-2.5 rounded-xl bg-accent text-white text-sm font-semibold active:scale-[0.98] transition-transform flex items-center justify-center gap-2"
+              >
+                <ImagePlus className="w-4 h-4" /> Foto hinzufügen
+              </button>
+              <button
+                onClick={() => { setShowImageReminder(false); doSubmit(); }}
+                className="w-full py-2.5 rounded-xl bg-surface-elevated border border-border text-text-secondary text-sm font-medium active:scale-[0.98] transition-transform"
+              >
+                Ohne Foto absenden
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
       </motion.div>
     </div>
   );

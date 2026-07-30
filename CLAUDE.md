@@ -213,7 +213,10 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
   → AssemblyAI (Upload/Transkript/Poll wie WF10) → Claude „aus Sprachnachricht";
   `mode=text` → Claude „aus Text". Beide → `01 Inbox/Neue Rezepte/`. Plus
   **Telegram-Benachrichtigung** an den Kochbuch-Bot bei jeder Einreichung — im
-  Telegram-Node die eigene chatId eintragen.
+  Telegram-Node die eigene chatId eintragen. **Ohne Foto:** die App erinnert beim
+  Absenden freundlich („Hast du ein Foto?", trotzdem absendbar), und **Workflow 14
+  generiert dann ein KI-Bild** (Claude-Foto-Prompt → Imagen, wie WF10) als
+  `Profilbild` (`{slug}.jpg`; mit Foto: `{slug}.webp`). Poll-Zähler nutzt `$runIndex`.
 - **Ideen**: Reset/„nochmal von vorn" pro Gast, saisonale Trending-Gewichtung
   (Spargelzeit etc.), Gericht-Detail-Statistik im Admin, Export.
 
