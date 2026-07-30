@@ -6,7 +6,7 @@ import {
   Loader2, ChevronRight, Clock, Users, Flame,
   LayoutGrid, Layers, X, ExternalLink, AlertCircle, Check,
   Heart, Star, RotateCcw, User, Search, Copy, UserPlus, Sparkles, LogOut,
-  CookingPot, UtensilsCrossed, ChefHat, Soup, Share2, ImagePlus,
+  CookingPot, UtensilsCrossed, ChefHat, Soup, Share2, ImagePlus, Mic, Square, Pencil,
 } from "lucide-react";
 
 // Instagram-Glyph (aus lucide entfernt) als inline-SVG
@@ -779,6 +779,117 @@ function FieldLabel({ children }: { children: React.ReactNode }) {
   return <label className="block text-[11px] font-semibold text-text-muted uppercase tracking-wide mb-1">{children}</label>;
 }
 
+// ── Sprach-Rekorder (MediaRecorder) ───────────────────────────
+// Tap = Start, Tap = Stopp (robuster als Halten auf Mobil). Danach Wiedergabe + Neu.
+function VoiceRecorder({ onAudioChange }: { onAudioChange: (blob: Blob | null) => void }) {
+  const [recording, setRecording] = useState(false);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [seconds, setSeconds] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const mrRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const streamRef = useRef<MediaStream | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopStream = () => {
+    if (timerRef.current) { clearInterval(timerRef.current); timerRef.current = null; }
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+  };
+  useEffect(() => () => { stopStream(); if (audioUrl) URL.revokeObjectURL(audioUrl); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const pickMime = () => {
+    const cands = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"];
+    return cands.find((t) => typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported?.(t)) || "";
+  };
+
+  const start = async () => {
+    setError(null);
+    if (audioUrl) { URL.revokeObjectURL(audioUrl); setAudioUrl(null); }
+    onAudioChange(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      const mime = pickMime();
+      const mr = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      chunksRef.current = [];
+      mr.ondataavailable = (e) => { if (e.data.size > 0) chunksRef.current.push(e.data); };
+      mr.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: mr.mimeType || "audio/webm" });
+        const url = URL.createObjectURL(blob);
+        setAudioUrl(url);
+        onAudioChange(blob);
+        stopStream();
+      };
+      mr.start();
+      mrRef.current = mr;
+      setSeconds(0);
+      setRecording(true);
+      timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000);
+    } catch {
+      setError("Mikrofon-Zugriff nicht möglich. Erlaube ihn in den Browser-Einstellungen.");
+    }
+  };
+
+  const stop = () => {
+    try { mrRef.current?.stop(); } catch { /* ignore */ }
+    setRecording(false);
+  };
+
+  const reset = () => {
+    if (audioUrl) URL.revokeObjectURL(audioUrl);
+    setAudioUrl(null); setSeconds(0); onAudioChange(null);
+  };
+
+  const mmss = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+
+  // Aufgenommen → Wiedergabe + Neu
+  if (audioUrl && !recording) {
+    return (
+      <div className="space-y-2">
+        <div className="flex items-center gap-2 text-xs font-semibold text-[#3f6b43]">
+          <Check className="w-4 h-4" /> Aufnahme fertig
+        </div>
+        {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
+        <audio src={audioUrl} controls className="w-full" />
+        <button onClick={start} className="inline-flex items-center gap-1.5 text-xs font-semibold text-accent">
+          <RotateCcw className="w-3.5 h-3.5" /> Neu aufnehmen
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col items-center gap-3 py-2">
+      <button
+        onClick={recording ? stop : start}
+        className={`relative w-20 h-20 rounded-full flex items-center justify-center text-white active:scale-95 transition-transform ${recording ? "bg-[#bd5138]" : "bg-accent"}`}
+        aria-label={recording ? "Aufnahme stoppen" : "Aufnahme starten"}
+      >
+        {recording && (
+          <motion.span
+            className="absolute inset-0 rounded-full border-2 border-[#bd5138]"
+            animate={{ scale: [1, 1.35], opacity: [0.6, 0] }}
+            transition={{ duration: 1.2, repeat: Infinity, ease: "easeOut" }}
+          />
+        )}
+        {recording ? <Square className="w-7 h-7 fill-white" /> : <Mic className="w-8 h-8" />}
+      </button>
+      <div className="text-center">
+        {recording ? (
+          <>
+            <p className="text-sm font-bold text-[#bd5138] tabular-nums">{mmss(seconds)}</p>
+            <p className="text-[11px] text-text-muted">Läuft … tippen zum Stoppen</p>
+          </>
+        ) : (
+          <p className="text-[11px] text-text-muted">Tippen und das Rezept einsprechen</p>
+        )}
+      </div>
+      {error && <p className="text-xs text-[#bd5138] text-center">{error}</p>}
+    </div>
+  );
+}
+
 function SuggestSheet({ onClose, defaultName }: { onClose: () => void; defaultName?: string }) {
   const toast = useToast();
   const prefersReduced = useReducedMotion();
@@ -793,6 +904,8 @@ function SuggestSheet({ onClose, defaultName }: { onClose: () => void; defaultNa
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const [mode, setMode] = useState<"text" | "audio">("text");
+  const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
 
   useEffect(() => {
     document.body.style.overflow = "hidden";
@@ -807,11 +920,17 @@ function SuggestSheet({ onClose, defaultName }: { onClose: () => void; defaultNa
   const inputCls = "w-full px-3 py-2.5 rounded-xl bg-surface-elevated border border-border text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent";
 
   const submit = async () => {
-    if (!name.trim()) { toast.error("Fast!", "Gib dem Rezept einen Namen."); return; }
-    if (!ingredients.trim() && !steps.trim()) { toast.error("Fast!", "Zutaten oder Zubereitung fehlen."); return; }
-    setSending(true);
-    try {
-      const fd = new FormData();
+    const fd = new FormData();
+    fd.append("mode", mode);
+    fd.append("submittedBy", submitter);
+    if (imageFile) fd.append("image", imageFile);
+
+    if (mode === "audio") {
+      if (!audioBlob) { toast.error("Fast!", "Nimm zuerst eine Sprachnachricht auf."); return; }
+      fd.append("audio", audioBlob, "aufnahme.webm");
+    } else {
+      if (!name.trim()) { toast.error("Fast!", "Gib dem Rezept einen Namen."); return; }
+      if (!ingredients.trim() && !steps.trim()) { toast.error("Fast!", "Zutaten oder Zubereitung fehlen."); return; }
       fd.append("name", name);
       fd.append("description", description);
       fd.append("category", category);
@@ -819,12 +938,16 @@ function SuggestSheet({ onClose, defaultName }: { onClose: () => void; defaultNa
       fd.append("steps", steps);
       fd.append("tips", tips);
       fd.append("source", source);
-      fd.append("submittedBy", submitter);
-      if (imageFile) fd.append("image", imageFile);
+    }
+
+    setSending(true);
+    try {
       const res = await fetch("/api/recipes/submit", { method: "POST", body: fd });
       const d = await res.json().catch(() => ({}));
       if (res.ok) {
-        toast.success("Danke!", "Dein Rezept ist bei Christian gelandet 🍽️");
+        toast.success("Danke!", mode === "audio"
+          ? "Deine Sprachnachricht ist unterwegs — Christian macht ein Rezept draus 🍽️"
+          : "Dein Rezept ist bei Christian gelandet 🍽️");
         onClose();
       } else {
         toast.error("Hat nicht geklappt", (d.error as string) ?? "Versuch's gleich nochmal.");
@@ -858,38 +981,63 @@ function SuggestSheet({ onClose, defaultName }: { onClose: () => void; defaultNa
         </div>
 
         <div className="space-y-3.5">
+          {/* Umschalter: Tippen / Sprechen */}
+          <div className="flex items-center rounded-full bg-surface-elevated p-1 border border-border">
+            {([["text", Pencil, "Tippen"], ["audio", Mic, "Sprechen"]] as const).map(([m, Icon, label]) => (
+              <button
+                key={m}
+                onClick={() => setMode(m)}
+                className={`flex-1 py-1.5 rounded-full text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors ${mode === m ? "bg-surface text-text-primary shadow-sm" : "text-text-muted"}`}
+              >
+                <Icon className="w-3.5 h-3.5" /> {label}
+              </button>
+            ))}
+          </div>
+
           <AnimatedInput label="Dein Name" value={submitter} onChange={setSubmitter} />
-          <AnimatedInput label="Name des Gerichts" value={name} onChange={setName} />
-          <AnimatedInput label="Kurzbeschreibung" value={description} onChange={setDescription} />
 
-          <div>
-            <FieldLabel>Kategorie</FieldLabel>
-            <select value={category} onChange={(e) => setCategory(e.target.value)} className={inputCls}>
-              {["Frühstück", "Hauptgericht", "Dessert"].map((c) => (
-                <option key={c} value={c}>{catLabel(c)}</option>
-              ))}
-            </select>
-          </div>
+          {mode === "audio" ? (
+            <div className="rounded-2xl border border-border bg-surface-elevated/40 p-4">
+              <p className="text-xs text-text-secondary leading-relaxed mb-1 text-center">
+                Sprich das Rezept ein — <span className="font-semibold text-text-primary">Name, Zutaten, Zubereitung</span> und ein paar Tipps. Christian macht daraus automatisch ein Rezept.
+              </p>
+              <VoiceRecorder onAudioChange={setAudioBlob} />
+            </div>
+          ) : (
+            <>
+              <AnimatedInput label="Name des Gerichts" value={name} onChange={setName} />
+              <AnimatedInput label="Kurzbeschreibung" value={description} onChange={setDescription} />
 
-          <div>
-            <FieldLabel>Zutaten — eine pro Zeile</FieldLabel>
-            <textarea value={ingredients} onChange={(e) => setIngredients(e.target.value)} rows={4}
-              placeholder={"200 g Mehl\n2 Eier\n1 Prise Salz"} className={`${inputCls} resize-none leading-relaxed`} />
-          </div>
+              <div>
+                <FieldLabel>Kategorie</FieldLabel>
+                <select value={category} onChange={(e) => setCategory(e.target.value)} className={inputCls}>
+                  {["Frühstück", "Hauptgericht", "Dessert"].map((c) => (
+                    <option key={c} value={c}>{catLabel(c)}</option>
+                  ))}
+                </select>
+              </div>
 
-          <div>
-            <FieldLabel>Zubereitung — ein Schritt pro Zeile</FieldLabel>
-            <textarea value={steps} onChange={(e) => setSteps(e.target.value)} rows={4}
-              placeholder={"Ofen auf 180°C vorheizen\nAlles verrühren\n25 Min backen"} className={`${inputCls} resize-none leading-relaxed`} />
-          </div>
+              <div>
+                <FieldLabel>Zutaten — eine pro Zeile</FieldLabel>
+                <textarea value={ingredients} onChange={(e) => setIngredients(e.target.value)} rows={4}
+                  placeholder={"200 g Mehl\n2 Eier\n1 Prise Salz"} className={`${inputCls} resize-none leading-relaxed`} />
+              </div>
 
-          <div>
-            <FieldLabel>Tipps (optional)</FieldLabel>
-            <textarea value={tips} onChange={(e) => setTips(e.target.value)} rows={2}
-              placeholder="Schmeckt auch mit …" className={`${inputCls} resize-none leading-relaxed`} />
-          </div>
+              <div>
+                <FieldLabel>Zubereitung — ein Schritt pro Zeile</FieldLabel>
+                <textarea value={steps} onChange={(e) => setSteps(e.target.value)} rows={4}
+                  placeholder={"Ofen auf 180°C vorheizen\nAlles verrühren\n25 Min backen"} className={`${inputCls} resize-none leading-relaxed`} />
+              </div>
 
-          <AnimatedInput label="Quelle / Link (optional)" value={source} onChange={setSource} inputMode="url" />
+              <div>
+                <FieldLabel>Tipps (optional)</FieldLabel>
+                <textarea value={tips} onChange={(e) => setTips(e.target.value)} rows={2}
+                  placeholder="Schmeckt auch mit …" className={`${inputCls} resize-none leading-relaxed`} />
+              </div>
+
+              <AnimatedInput label="Quelle / Link (optional)" value={source} onChange={setSource} inputMode="url" />
+            </>
+          )}
 
           <div>
             <FieldLabel>Foto (optional)</FieldLabel>
@@ -914,11 +1062,11 @@ function SuggestSheet({ onClose, defaultName }: { onClose: () => void; defaultNa
 
         <button
           onClick={submit}
-          disabled={sending}
+          disabled={sending || (mode === "audio" ? !audioBlob : !name.trim())}
           className="w-full py-3 rounded-xl bg-accent text-white text-sm font-semibold active:scale-[0.98] transition-transform disabled:opacity-50 flex items-center justify-center gap-2 sticky bottom-0"
         >
           {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-          {sending ? "Sende…" : "Rezept absenden"}
+          {sending ? "Sende…" : mode === "audio" ? "Sprachnachricht absenden" : "Rezept absenden"}
         </button>
       </motion.div>
     </div>

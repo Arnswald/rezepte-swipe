@@ -202,8 +202,18 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
   `.md`** (Frontmatter gequotet, 🛒 als `- [ ]`, 👨‍🍳 nummeriert), konvertiert das Bild
   zu **WebP** (`sharp`), legt beides als Backup in `DATA_DIR/einreichungen/` ab **und**
   POSTet an `N8N_SUGGEST_WEBHOOK` (Bild als Base64). **Die App schreibt NIE in den Vault**
-  — das Einsortieren macht **n8n** (Christian richtet den Flow ein: Webhook → optional
-  KI-Anreicherung → Bild + `.md` in den Vault, empfohlen erst in `01 Inbox/…` als Review).
+  — das Einsortieren macht **n8n** (Workflow `14. Rezepte-App Einreichung → Obsidian`
+  im n8n-Repo: Webhook → Claude formatiert ins Template → `.md` + WebP in
+  `01 Inbox/Neue Rezepte/`).
+- **v7 (LIVE-fähig, 30.07.2026): Einreichung per Sprachnachricht + Telegram-Notify.**
+  Einreich-Sheet hat einen Umschalter **Tippen / Sprechen** (`VoiceRecorder`,
+  MediaRecorder, Tap-Start/Stop, Wiedergabe). Audio geht als `mode=audio` an
+  `/api/recipes/submit` — die App transkribiert NICHT selbst, sondern reicht die
+  Aufnahme (Base64) an n8n weiter. **Workflow 14** hat jetzt zwei Zweige: `mode=audio`
+  → AssemblyAI (Upload/Transkript/Poll wie WF10) → Claude „aus Sprachnachricht";
+  `mode=text` → Claude „aus Text". Beide → `01 Inbox/Neue Rezepte/`. Plus
+  **Telegram-Benachrichtigung** an den Kochbuch-Bot bei jeder Einreichung — im
+  Telegram-Node die eigene chatId eintragen.
 - **Ideen**: Reset/„nochmal von vorn" pro Gast, saisonale Trending-Gewichtung
   (Spargelzeit etc.), Gericht-Detail-Statistik im Admin, Export.
 
