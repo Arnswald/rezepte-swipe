@@ -20,7 +20,7 @@ interface AdminPerson {
   guestId: string; name: string; friendCode: string | null;
   likes: number; supers: number; nopes: number; total: number;
   connections: number; connectedTo: { guestId: string; name: string }[];
-  liked: string[]; lastActive: string | null; createdAt: string | null;
+  liked: string[]; lastActive: string | null; createdAt: string | null; registeredAt: string | null;
 }
 // Spiegel von AdminGroup aus /api/admin/groups
 interface AdminGroup {
@@ -33,6 +33,11 @@ const PIN_KEY = "rezepte-admin-pin";
 function fmtTime(iso: string): string {
   try {
     return new Date(iso).toLocaleString("de-DE", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  } catch { return iso; }
+}
+function fmtDate(iso: string): string {
+  try {
+    return new Date(iso).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" });
   } catch { return iso; }
 }
 
@@ -428,6 +433,9 @@ function PersonAdminRow({
           </div>
 
           {/* Zusatz-Infos + Favoriten */}
+          {p.registeredAt && (
+            <p className="text-[11px] text-text-secondary">📅 Registriert am {fmtDate(p.registeredAt)}</p>
+          )}
           <p className="text-[11px] text-text-muted tabular-nums">
             {p.total} Bewertungen{p.lastActive ? ` · zuletzt ${fmtTime(p.lastActive)}` : ""}
           </p>

@@ -348,6 +348,7 @@ export interface AdminPerson {
   liked: string[];
   lastActive: string | null;
   createdAt: string | null;
+  registeredAt: string | null; // Datum der Account-Registrierung (accounts.created_at)
 }
 
 /**
@@ -361,12 +362,14 @@ export function getAdminPersons(): AdminPerson[] {
     .prepare(`SELECT guest_id, name, recipe_name, slug, verdict, updated_at FROM verdicts`)
     .all() as { guest_id: string; name: string; recipe_name: string; slug: string; verdict: Verdict; updated_at: string }[];
   const conns = db.prepare(`SELECT guest_a, guest_b FROM connections`).all() as { guest_a: string; guest_b: string }[];
+  const accounts = db.prepare(`SELECT guest_id, created_at FROM accounts`).all() as { guest_id: string; created_at: string }[];
+  const regByGuest = new Map(accounts.map((a) => [a.guest_id, a.created_at]));
 
   const map = new Map<string, AdminPerson>();
   const ensure = (id: string, name: string): AdminPerson => {
     let p = map.get(id);
     if (!p) {
-      p = { guestId: id, name: name || "Gast", friendCode: null, likes: 0, supers: 0, nopes: 0, total: 0, connections: 0, connectedTo: [], liked: [], lastActive: null, createdAt: null };
+      p = { guestId: id, name: name || "Gast", friendCode: null, likes: 0, supers: 0, nopes: 0, total: 0, connections: 0, connectedTo: [], liked: [], lastActive: null, createdAt: null, registeredAt: null };
       map.set(id, p);
     }
     return p;
@@ -400,7 +403,10 @@ export function getAdminPersons(): AdminPerson[] {
       if (pb) pb.connectedTo.push({ guestId: c.guest_a, name: "?" });
     }
   }
-  for (const p of map.values()) p.connections = p.connectedTo.length;
+  for (const p of map.values()) {
+    p.connections = p.connectedTo.length;
+    p.registeredAt = regByGuest.get(p.guestId) ?? null;
+  }
 
   return [...map.values()].sort(
     (a, b) => (b.lastActive ?? "").localeCompare(a.lastActive ?? "") || (b.createdAt ?? "").localeCompare(a.createdAt ?? ""),
