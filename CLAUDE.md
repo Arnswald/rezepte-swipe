@@ -217,24 +217,50 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
   Absenden freundlich („Hast du ein Foto?", trotzdem absendbar), und **Workflow 14
   generiert dann ein KI-Bild** (Claude-Foto-Prompt → Imagen, wie WF10) als
   `Profilbild` (`{slug}.jpg`; mit Foto: `{slug}.webp`). Poll-Zähler nutzt `$runIndex`.
-- **Ideen**: Reset/„nochmal von vorn" pro Gast, saisonale Trending-Gewichtung
-  (Spargelzeit etc.), Gericht-Detail-Statistik im Admin, Export.
+- **v8 (LIVE-fähig, 30.07.2026): Bewerten, Empfehlungen, Vorlieben + Feinschliff.**
+  - **Swipe-Deck filtert Geswipte:** zeigt nur noch ungeswipte Gerichte (stabiler
+    Snapshot). **„Nö" bleibt dauerhaft weg**, auch nach „Nochmal von vorn"/nächstem Tag
+    (Reset = alles außer Abgelehnte). Snapshot wird nach `/api/me`-Hydration einmalig
+    neu gebaut, solange noch nicht geswipt.
+  - **Sterne-Bewertung nach dem Kochen** (getrennt vom Swipe-Verdict): 1–5 Sterne im
+    Detail-Sheet („Schon gekocht?"), Profil-Sektion „Schon gekocht". Tabelle `ratings`,
+    `/api/rating`, in `/api/me` mit ausgeliefert.
+  - **Bewerten/Hinzufügen aus „Alle Gerichte":** Detail-Sheet hat Verdict-Buttons
+    (Nö/Lecker/Superlike) + Sterne — funktioniert also auch ohne Swipen.
+  - **Empfehlungen (zutatenbasiert):** `deriveTags` in `recipes.ts` (kuratiertes Lexikon
+    → Tags wie hähnchen/pasta/käse/vegetarisch aus Name+Zutaten). Client baut ein
+    Geschmacksprofil aus Likes/Superlikes/Sternen → **„Für dich"-Reihe** in Alle Gerichte
+    **+ Swipe-Deck nach Geschmack sortiert** (`recipeScore`/`orderDeck` in `page.tsx`).
+  - **„Was ich nicht mag" (schlank):** Freitext-Tags im Profil (Tabelle `preferences`,
+    `/api/preferences`). Gerichte mit diesen Zutaten sinken im Raster/Deck + dezente
+    Notiz im Detail. In `/api/me` mit ausgeliefert (geräteübergreifend).
+  - **Header/Nav:** Logo + „Rezepte"-Text oben links **entfernt** → nur noch zentrierte
+    3-Tab-Nav, aktiver Tab zeigt Label. Tabs: **Entdecken · Alle Gerichte · Profil**.
+    Neues Logo **„Gabel & Swipe"** (`src/components/LogoMark.tsx`) dient nur als
+    **Favicon/App-Icon** (`public/icon.svg` + PNGs neu generiert).
+  - **DB-Migration:** neue Tabellen (`ratings`, `preferences`) entstehen automatisch via
+    `CREATE TABLE IF NOT EXISTS` beim ersten Zugriff — kein manueller Schritt nötig.
+- **Ideen**: saisonale Trending-Gewichtung (Spargelzeit etc.),
+  Gericht-Detail-Statistik im Admin, Export, Sterne-Schnitt öffentlich anzeigen.
 
 ## Wichtige Dateien
 
 | Datei | Zweck |
 |---|---|
-| `src/app/page.tsx` | Auth-Gate (Login), 3-Tab-Nav (Swipe/Raster/Account), Deck, Raster (Trending+Suche), Detail-Sheet, AccountView, Deep-Link `?rezept=` |
+| `src/app/page.tsx` | Auth-Gate (Login), 3-Tab-Nav (Entdecken/Alle Gerichte/Profil), Deck (Snapshot, geswipte raus, geschmackssortiert), Raster (Trending+Suche+„Für dich"), Detail-Sheet (Verdict+Sterne), AccountView (Favoriten/Schon gekocht/Was ich nicht mag), Empfehlungslogik (`recipeScore`/`orderDeck`), Deep-Link `?rezept=` |
+| `src/components/LogoMark.tsx` | Logo „Gabel & Swipe" (SVG-Komponente) — dient nur als Favicon/App-Icon |
 | `src/app/admin/page.tsx` | Admin-Auswertung + Personen-Verwaltung (PIN-Gate, Löschen) |
 | `src/app/rezept/[slug]/page.tsx` | Teilbare, server-gerenderte Rezept-Seite (OG-Tags) |
 | `src/components/ShareButton.tsx` | Teilen via `navigator.share`, Fallback Link-Copy |
-| `src/lib/recipes.ts` | Rezept-Parser (+ `getRecipeBySlug` für die Detail-Seite) |
-| `src/lib/db.ts` | better-sqlite3: `verdicts` + `guests`/`connections` + `groups`/`group_members`, Codes/Matches/Trending/Gruppen-Ranking |
+| `src/lib/recipes.ts` | Rezept-Parser (+ `getRecipeBySlug`) + `deriveTags` (Zutaten-Tags fürs Empfehlungs-Scoring) |
+| `src/lib/db.ts` | better-sqlite3: `verdicts` + `guests`/`connections` + `groups`/`group_members` + `ratings` (Sterne) + `preferences` (Abneigungen), Codes/Matches/Trending/Gruppen-Ranking |
 | `src/lib/env.ts` | Env-Zugriff (RECIPES-Pfade, DATA_DIR, ADMIN_PIN, SITE_URL, Webhook) |
 | `src/app/api/auth/register/route.ts` | POST: Account anlegen (Benutzername+Passwort, übernimmt guestId) |
 | `src/app/api/auth/login/route.ts` | POST: Login → Identität + Server-Bewertungen |
-| `src/app/api/me/route.ts` | POST: Server-Stand (Bewertungen, Freundescode) fürs Hydrieren |
+| `src/app/api/me/route.ts` | POST: Server-Stand (Verdicts, Sterne, Abneigungen, Freundescode) fürs Hydrieren |
 | `src/app/api/verdict/route.ts` | POST: Verdict speichern/löschen (+ `ensureGuest`) |
+| `src/app/api/rating/route.ts` | POST: Sterne-Bewertung (1–5) speichern/löschen |
+| `src/app/api/preferences/route.ts` | POST: „Was ich nicht mag"-Tags speichern |
 | `src/app/api/friends/register/route.ts` | POST: Gast anlegen → Freundescode |
 | `src/app/api/friends/connect/route.ts` | POST: per Code verbinden |
 | `src/app/api/friends/matches/route.ts` | POST: Verbindungen + Matches („beide mögen es") |
