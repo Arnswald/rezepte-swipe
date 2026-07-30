@@ -240,6 +240,19 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
     **Favicon/App-Icon** (`public/icon.svg` + PNGs neu generiert).
   - **DB-Migration:** neue Tabellen (`ratings`, `preferences`) entstehen automatisch via
     `CREATE TABLE IF NOT EXISTS` beim ersten Zugriff — kein manueller Schritt nötig.
+- **v9 (LIVE-fähig, 30.07.2026): Koch-Verlauf + Profil-Umbau.**
+  - **„Bereits gekocht (mit wem + Datum)"** = Koch-Verlauf: Tabelle `cook_events`
+    (Autor + optional Partner + `cooked_on`), mehrere Einträge pro Gericht (Verlauf).
+    Eingabe im Detail-Sheet („Bereits gekocht — festhalten"): Dropdown **mit wem**
+    (aus den Verbindungen) + **Datum** + „Eintragen"; Verlaufsliste mit Löschen.
+    Einträge sind für **Autor UND Partner** sichtbar (`getCookEventsForGuest` = author
+    OR partner). `/api/cooked` (action add/remove); in `/api/me` mit `cooked` +
+    `connections` (fürs Dropdown). Profil-Sektion **„Schon gekocht"** merged jetzt
+    Sterne **und** Koch-Verlauf („Zuletzt TT.MM.JJJJ · mit Name").
+  - **Profil-Reihenfolge** (per CSS `order`): Begrüßung → **Eure Matches** →
+    **Meine Favoriten** → **Schon gekocht** → **Rezept einreichen** (akzentfarben,
+    weiter oben) → Gruppen → Freundescode → Verbinden → Was ich nicht mag → Abmelden.
+  - **Favoriten**: max. 10, Rest per „Alle N anzeigen" aufklappbar (`favsExpanded`).
 - **Ideen**: saisonale Trending-Gewichtung (Spargelzeit etc.),
   Gericht-Detail-Statistik im Admin, Export, Sterne-Schnitt öffentlich anzeigen.
 
@@ -253,7 +266,7 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
 | `src/app/rezept/[slug]/page.tsx` | Teilbare, server-gerenderte Rezept-Seite (OG-Tags) |
 | `src/components/ShareButton.tsx` | Teilen via `navigator.share`, Fallback Link-Copy |
 | `src/lib/recipes.ts` | Rezept-Parser (+ `getRecipeBySlug`) + `deriveTags` (Zutaten-Tags fürs Empfehlungs-Scoring) |
-| `src/lib/db.ts` | better-sqlite3: `verdicts` + `guests`/`connections` + `groups`/`group_members` + `ratings` (Sterne) + `preferences` (Abneigungen), Codes/Matches/Trending/Gruppen-Ranking |
+| `src/lib/db.ts` | better-sqlite3: `verdicts` + `guests`/`connections` + `groups`/`group_members` + `ratings` (Sterne) + `preferences` (Abneigungen) + `cook_events` (Koch-Verlauf, Autor+Partner+Datum), Codes/Matches/Trending/Gruppen-Ranking |
 | `src/lib/env.ts` | Env-Zugriff (RECIPES-Pfade, DATA_DIR, ADMIN_PIN, SITE_URL, Webhook) |
 | `src/app/api/auth/register/route.ts` | POST: Account anlegen (Benutzername+Passwort, übernimmt guestId) |
 | `src/app/api/auth/login/route.ts` | POST: Login → Identität + Server-Bewertungen |
@@ -261,6 +274,7 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
 | `src/app/api/verdict/route.ts` | POST: Verdict speichern/löschen (+ `ensureGuest`) |
 | `src/app/api/rating/route.ts` | POST: Sterne-Bewertung (1–5) speichern/löschen |
 | `src/app/api/preferences/route.ts` | POST: „Was ich nicht mag"-Tags speichern |
+| `src/app/api/cooked/route.ts` | POST (add/remove): Koch-Verlauf „bereits gekocht" (mit wem + Datum) |
 | `src/app/api/friends/register/route.ts` | POST: Gast anlegen → Freundescode |
 | `src/app/api/friends/connect/route.ts` | POST: per Code verbinden |
 | `src/app/api/friends/matches/route.ts` | POST: Verbindungen + Matches („beide mögen es") |
