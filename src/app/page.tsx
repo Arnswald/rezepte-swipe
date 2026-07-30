@@ -1780,6 +1780,8 @@ export default function RezeptePage() {
   const [detail, setDetail] = useState<Recipe | null>(null);
   const [verdicts, setVerdicts] = useState<Record<string, Verdict>>({});
   const [history, setHistory] = useState<string[]>([]);
+  const [deckList, setDeckList] = useState<Recipe[]>([]);
+  const [deckMode, setDeckMode] = useState<"new" | "all">("new"); // new = nur ungeswipte, all = alles außer „nö"
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [guestName, setGuestName] = useState<string | null>(null);
   const [guestId, setGuestId] = useState<string>("");
@@ -1792,6 +1794,9 @@ export default function RezeptePage() {
   const dimTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const deepLinkDone = useRef(false);
   const pendingGroupDone = useRef(false);
+  const verdictsRef = useRef<Record<string, Verdict>>({});
+  const filteredRef = useRef<Recipe[]>([]);
+  const startedRef = useRef(false); // true, sobald in dieser Deck-Runde geswipt wurde
   const toast = useToast();
 
   useEffect(() => {
@@ -1815,7 +1820,19 @@ export default function RezeptePage() {
       body: JSON.stringify({ guestId, name: guestName }),
     })
       .then((r) => r.json())
-      .then((d) => { if (d.verdicts) { setVerdicts(d.verdicts); replaceVerdicts(d.verdicts); } })
+      .then((d) => {
+        if (!d.verdicts) return;
+        setVerdicts(d.verdicts);
+        replaceVerdicts(d.verdicts);
+        // Deck einmalig mit den Server-Bewertungen neu bauen — solange der User
+        // in dieser Runde noch nicht selbst geswipt hat (sonst nicht anfassen).
+        if (!startedRef.current) {
+          setDeckList(filteredRef.current.filter((r) => !d.verdicts[r.slug]));
+          setDeckMode("new");
+          setIndex(0);
+          setHistory([]);
+        }
+      })
       .catch(() => { /* offline egal */ });
   }, [hydrated, guestId, guestName]);
 
@@ -1847,10 +1864,12 @@ export default function RezeptePage() {
   // Abmelden: lokale Identität + Cache löschen → Auth-Gate erscheint wieder.
   const logout = useCallback(() => {
     try { localStorage.removeItem(NAME_KEY); localStorage.removeItem(ID_KEY); localStorage.removeItem(FAV_KEY); } catch { /* ignore */ }
+    startedRef.current = false; setDeckList([]);
     setGuestName(null); setGuestId(""); setVerdicts({}); setHistory([]); setIndex(0); setMode("swipe");
   }, []);
 
   const handleVerdict = useCallback((r: Recipe, v: Verdict) => {
+    startedRef.current = true;
     saveVerdict(r.slug, v);
     setVerdicts((prev) => ({ ...prev, [r.slug]: v }));
     setHistory((prev) => [...prev, r.slug]);
@@ -1898,7 +1917,33 @@ export default function RezeptePage() {
     return recipes.filter((r) => r.category === activeCat);
   }, [recipes, activeCat]);
 
-  useEffect(() => { setIndex(0); }, [activeCat]);
+  // verdicts + filtered immer aktuell im Ref halten (für den Deck-Aufbau nach
+  // asynchroner Hydration, ohne Re-Render-Schleife)
+  useEffect(() => { verdictsRef.current = verdicts; }, [verdicts]);
+  useEffect(() => { filteredRef.current = filtered; }, [filtered]);
+
+  // ── Swipe-Stapel (Snapshot) ────────────────────────────────────────
+  // Der Deck zeigt nur Rezepte, die man NOCH NICHT geswipt hat. Einmal geswipt
+  // (egal ob lecker/nö/super) → raus aus dem Stapel. „Nö" bleibt dauerhaft weg,
+  // auch nach „Nochmal von vorn". Snapshot = stabile Reihenfolge beim Wischen.
+  useEffect(() => {
+    const v = verdictsRef.current;
+    setDeckList(filtered.filter((r) => !v[r.slug]));
+    setDeckMode("new");
+    setIndex(0);
+    setHistory([]);
+    startedRef.current = false;
+  }, [filtered]);
+
+  // „Nochmal von vorn": zeigt wieder alles AUSSER den abgelehnten Gerichten.
+  const resetDeck = useCallback(() => {
+    const v = verdictsRef.current;
+    setDeckList(filtered.filter((r) => v[r.slug] !== "nope"));
+    setDeckMode("all");
+    setIndex(0);
+    setHistory([]);
+    startedRef.current = false;
+  }, [filtered]);
 
   // Trending-Zähler: einmal beim Start (für Raster-Badges + Abend-Reihenfolge) …
   useEffect(() => {
@@ -1999,20 +2044,22 @@ export default function RezeptePage() {
 
   // Vorausladen: die nächsten Karten-Bilder schon holen, damit Wischen instant wirkt.
   useEffect(() => {
-    if (mode !== "swipe" || filtered.length === 0) return;
+    if (mode !== "swipe") return;
+    const deck = eveningGroup ? eveningRecipes : deckList;
+    if (deck.length === 0) return;
     const AHEAD = 5;
-    for (let i = index; i < Math.min(index + AHEAD, filtered.length); i++) {
-      const r = filtered[i];
+    for (let i = index; i < Math.min(index + AHEAD, deck.length); i++) {
+      const r = deck[i];
       if (!r?.imageExists || !r.image) continue;
       const pre = new window.Image();
       pre.decoding = "async";
       pre.src = imageUrl(r.image, 800)!;
     }
-  }, [filtered, index, mode]);
+  }, [deckList, eveningRecipes, eveningGroup, index, mode]);
 
   const showDeck = !loading && mode === "swipe" && (eveningGroup
     ? (eveningRecipes.length > 0 && index < eveningRecipes.length)
-    : (filtered.length > 0 && index < filtered.length));
+    : (deckList.length > 0 && index < deckList.length));
 
   // Vor allem anderen: Name abfragen (nach dem Lesen aus localStorage, um Flackern zu vermeiden)
   if (!hydrated) return <div className="h-[100dvh]" />;
@@ -2155,10 +2202,10 @@ export default function RezeptePage() {
                 </div>
               )}
             </>
-          ) : filtered.length > 0 ? (
-            index < filtered.length ? (
+          ) : deckList.length > 0 ? (
+            index < deckList.length ? (
               <SwipeDeck
-                recipes={filtered}
+                recipes={deckList}
                 index={index}
                 setIndex={setIndex}
                 onOpen={setDetail}
@@ -2170,10 +2217,35 @@ export default function RezeptePage() {
               <DeckDone
                 likeCount={likeCount}
                 superCount={superCount}
-                onRestart={() => setIndex(0)}
+                onRestart={resetDeck}
                 onShowFavs={() => setMode("account")}
               />
             )
+          ) : filtered.length > 0 ? (
+            // Alle Rezepte dieser Kategorie schon geswipt.
+            <div className="bg-surface border border-border rounded-2xl p-8 text-center space-y-4 mt-2">
+              <div className="text-5xl">🍽️</div>
+              <div>
+                <h2 className="text-lg font-semibold text-text-primary">
+                  {deckMode === "all" ? "Alles bewertet!" : "Alles durchgeswiped!"}
+                </h2>
+                <p className="text-sm text-text-muted mt-1">
+                  {deckMode === "all"
+                    ? "Du hast jedes Gericht hier bewertet. Deine Favoriten liegen im Account."
+                    : "Deine Favoriten liegen im Account. Nochmal ansehen? Abgelehnte bleiben ausgeblendet."}
+                </p>
+              </div>
+              <div className="flex flex-col gap-2 max-w-xs mx-auto">
+                {deckMode !== "all" && (
+                  <button onClick={resetDeck} className="w-full py-3 rounded-xl bg-accent text-white text-sm font-semibold active:scale-[0.98] transition-transform">
+                    Nochmal von vorn
+                  </button>
+                )}
+                <button onClick={() => setMode("account")} className="w-full py-2.5 rounded-xl bg-surface-elevated border border-border text-text-secondary text-sm font-medium active:scale-[0.98] transition-transform">
+                  Zu deinen Favoriten
+                </button>
+              </div>
+            </div>
           ) : (
             <p className="text-center text-sm text-text-muted py-12">
               Keine Rezepte in dieser Kategorie
