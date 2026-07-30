@@ -49,6 +49,7 @@ interface Recipe {
   ingredients: IngredientGroup[];
   steps: string[];
   tips: string[];
+  tags: string[];
 }
 
 // Swipe-Verdikt (Tinder-Logik) — lokal persistiert bis der öffentliche Login kommt
@@ -72,6 +73,55 @@ function saveVerdict(slug: string, v: Verdict | null) {
 // Lokalen Verdict-Cache komplett ersetzen (nach Login/Server-Hydration).
 function replaceVerdicts(all: Record<string, Verdict>) {
   try { localStorage.setItem(FAV_KEY, JSON.stringify(all)); } catch { /* ignore */ }
+}
+
+// Sterne-Bewertung (nach dem Kochen), lokal gespiegelt.
+const RATE_KEY = "rezepte-ratings-v1";
+function loadRatings(): Record<string, number> {
+  if (typeof window === "undefined") return {};
+  try { return JSON.parse(localStorage.getItem(RATE_KEY) || "{}"); } catch { return {}; }
+}
+function saveRatingLocal(slug: string, stars: number | null) {
+  try {
+    const all = loadRatings();
+    if (stars === null) delete all[slug]; else all[slug] = stars;
+    localStorage.setItem(RATE_KEY, JSON.stringify(all));
+  } catch { /* ignore */ }
+}
+function replaceRatings(all: Record<string, number>) {
+  try { localStorage.setItem(RATE_KEY, JSON.stringify(all)); } catch { /* ignore */ }
+}
+
+// „Was ich nicht mag" (Tokens), lokal gespiegelt.
+const DISLIKE_KEY = "rezepte-dislikes-v1";
+function loadDislikes(): string[] {
+  if (typeof window === "undefined") return [];
+  try { const v = JSON.parse(localStorage.getItem(DISLIKE_KEY) || "[]"); return Array.isArray(v) ? v : []; } catch { return []; }
+}
+function replaceDislikes(list: string[]) {
+  try { localStorage.setItem(DISLIKE_KEY, JSON.stringify(list)); } catch { /* ignore */ }
+}
+
+// ── Empfehlungslogik (zutatenbasiert) ─────────────────────────
+// Durchsuchbarer Text eines Rezepts (Name + Beschreibung + Zutaten), kleingeschrieben.
+function ingredientBlob(r: Recipe): string {
+  const ing = r.ingredients.flatMap((g) => [g.group, ...g.items]).join(" ");
+  return `${r.name} ${r.description} ${ing}`.toLowerCase();
+}
+// Welche Abneigungen treffen auf ein Rezept zu (Tag- oder Text-Treffer).
+function dislikeHits(r: Recipe, dislikes: string[]): string[] {
+  if (dislikes.length === 0) return [];
+  const blob = ingredientBlob(r);
+  const tagset = new Set(r.tags);
+  return dislikes.filter((d) => tagset.has(d) || blob.includes(d));
+}
+// Score eines Rezepts: Summe der Geschmacksprofil-Gewichte seiner Tags,
+// dicker Malus bei Abneigungs-Treffern.
+function recipeScore(r: Recipe, profile: Record<string, number>, dislikes: string[]): number {
+  let s = 0;
+  for (const t of r.tags) s += profile[t] ?? 0;
+  if (dislikeHits(r, dislikes).length) s -= 100;
+  return s;
 }
 
 // Frisch entstandenes Match (für die „Es ist ein Match!"-Animation)
@@ -559,7 +609,36 @@ function GalleryHeader({ r }: { r: Recipe }) {
 
 // ── Detail-Sheet ──────────────────────────────────────────────
 
-function RecipeDetail({ r, onClose }: { r: Recipe; onClose: () => void }) {
+// Sterne-Auswahl (1..5). Tippt man den aktuellen Wert erneut, wird er entfernt (null).
+function StarRating({ value, onChange, size = 30 }: { value: number; onChange: (n: number | null) => void; size?: number }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      {[1, 2, 3, 4, 5].map((n) => (
+        <button
+          key={n}
+          onClick={() => onChange(value === n ? null : n)}
+          aria-label={`${n} von 5 Sternen`}
+          className="p-0.5 active:scale-90 transition-transform"
+        >
+          <Star
+            className={n <= value ? "text-[#d99a2b]" : "text-text-muted/50"}
+            style={{ width: size, height: size }}
+            fill={n <= value ? "#d99a2b" : "none"}
+          />
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function RecipeDetail({
+  r, onClose, verdict, onVerdict, rating = 0, onRate, dislikeHitList = [],
+}: {
+  r: Recipe; onClose: () => void;
+  verdict?: Verdict; onVerdict?: (v: Verdict) => void;
+  rating?: number; onRate?: (n: number | null) => void;
+  dislikeHitList?: string[];
+}) {
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const prefersReduced = useReducedMotion();
 
@@ -632,6 +711,47 @@ function RecipeDetail({ r, onClose }: { r: Recipe; onClose: () => void }) {
 
         <div className="p-4 space-y-5">
           <p className="text-sm text-text-secondary leading-relaxed">{r.description}</p>
+
+          {/* Bewerten + zum Account (funktioniert auch aus „Alle Gerichte") */}
+          {onVerdict && (
+            <div className="rounded-xl border border-border bg-surface-elevated p-3.5 space-y-3.5">
+              <div>
+                <p className="text-[11px] font-semibold text-text-muted uppercase tracking-wide mb-2">Zu deinem Account</p>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {([["nope", X, "Nö"], ["like", Heart, "Lecker"], ["super", Star, "Superlike"]] as const).map(([v, Icon, label]) => {
+                    const active = verdict === v;
+                    const color = v === "nope" ? "#bd5138" : v === "like" ? "#4f9a58" : "#d99a2b";
+                    return (
+                      <button
+                        key={v}
+                        onClick={() => onVerdict(v)}
+                        className={`flex flex-col items-center gap-1 py-2.5 rounded-lg text-xs font-semibold border transition-colors ${
+                          active ? "text-white border-transparent" : "text-text-secondary border-border bg-surface"
+                        }`}
+                        style={active ? { background: color } : undefined}
+                      >
+                        <Icon className="w-4 h-4" /> {label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              {onRate && (
+                <div>
+                  <p className="text-[11px] font-semibold text-text-muted uppercase tracking-wide mb-2">
+                    Schon gekocht? Bewerte es
+                  </p>
+                  <StarRating value={rating} onChange={onRate} />
+                </div>
+              )}
+              {dislikeHitList.length > 0 && (
+                <p className="text-[11px] text-[#bd5138] flex items-start gap-1.5">
+                  <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-px" />
+                  Enthält {dislikeHitList.join(", ")} — magst du laut deinem Account nicht.
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Überblick */}
           <div className="grid grid-cols-3 gap-2">
@@ -1310,16 +1430,19 @@ interface GroupMatchUI { slug: string; recipeName: string; category: string; cou
 interface GroupViewUI { id: string; name: string; code: string; members: { guestId: string; name: string }[]; memberCount: number; matches: GroupMatchUI[]; evening: { plan: GroupMatchUI[]; myPicks: number } }
 
 function AccountView({
-  guestId, guestName, recipes, verdicts, onOpen, onSuggest, onLogout, onPlanEvening,
+  guestId, guestName, recipes, verdicts, ratings, dislikes, onOpen, onSuggest, onLogout, onPlanEvening, onSaveDislikes,
 }: {
   guestId: string;
   guestName: string;
   recipes: Recipe[];
   verdicts: Record<string, Verdict>;
+  ratings: Record<string, number>;
+  dislikes: string[];
   onOpen: (r: Recipe) => void;
   onSuggest: () => void;
   onLogout: () => void;
   onPlanEvening: (id: string, name: string) => void;
+  onSaveDislikes: (list: string[]) => void;
 }) {
   const toast = useToast();
   const [friendCode, setFriendCode] = useState("");
@@ -1347,6 +1470,26 @@ function AccountView({
         .filter((x): x is { r: Recipe; v: Verdict } => !!x.r),
     [verdicts, bySlug],
   );
+
+  // „Schon gekocht" — Gerichte mit Sterne-Bewertung, beste zuerst.
+  const cooked = useMemo(
+    () =>
+      Object.entries(ratings)
+        .map(([slug, stars]) => ({ r: bySlug.get(slug), stars }))
+        .filter((x): x is { r: Recipe; stars: number } => !!x.r)
+        .sort((a, b) => b.stars - a.stars || a.r.name.localeCompare(b.r.name)),
+    [ratings, bySlug],
+  );
+
+  // „Was ich nicht mag" — lokaler Editier-Zustand (Chips + Eingabe).
+  const [dislikeInput, setDislikeInput] = useState("");
+  const addDislike = (raw: string) => {
+    const v = raw.trim().toLowerCase().replace(/,+$/, "");
+    if (v.length < 2) return;
+    if (!dislikes.includes(v)) onSaveDislikes([...dislikes, v]);
+    setDislikeInput("");
+  };
+  const removeDislike = (d: string) => onSaveDislikes(dislikes.filter((x) => x !== d));
 
   const load = useCallback(async () => {
     try {
@@ -1747,6 +1890,77 @@ function AccountView({
         )}
       </div>
 
+      {/* Schon gekocht (Sterne-Bewertungen) */}
+      <div>
+        <h3 className="text-sm font-bold text-text-primary flex items-center gap-1.5 mb-2">
+          <CookingPot className="w-4 h-4 text-accent" /> Schon gekocht
+          {cooked.length > 0 && <span className="text-[11px] font-normal text-text-muted tabular-nums">({cooked.length})</span>}
+        </h3>
+        {cooked.length === 0 ? (
+          <p className="text-sm text-text-muted bg-surface border border-border rounded-2xl p-4">
+            Noch nichts bewertet. Öffne ein Gericht und vergib Sterne, wenn du&apos;s gekocht hast.
+          </p>
+        ) : (
+          <div className="space-y-2">
+            {cooked.map(({ r, stars }) => (
+              <button
+                key={r.slug}
+                onClick={() => onOpen(r)}
+                className="w-full flex items-center gap-3 bg-surface border border-border rounded-xl p-2 text-left active:scale-[0.99] transition-transform"
+              >
+                <div className="w-12 h-12 rounded-lg overflow-hidden bg-surface-elevated shrink-0">
+                  <RecipeImage r={r} w={400} className="w-full h-full object-cover" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-text-primary truncate">{r.name}</p>
+                  <div className="flex items-center gap-0.5 mt-0.5">
+                    {[1, 2, 3, 4, 5].map((n) => (
+                      <Star key={n} className={`w-3.5 h-3.5 ${n <= stars ? "text-[#d99a2b]" : "text-text-muted/40"}`} fill={n <= stars ? "#d99a2b" : "none"} />
+                    ))}
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Was ich nicht mag (schlank) */}
+      <div>
+        <h3 className="text-sm font-bold text-text-primary flex items-center gap-1.5 mb-1">
+          <X className="w-4 h-4 text-[#bd5138]" /> Was ich nicht mag
+        </h3>
+        <p className="text-[11px] text-text-muted mb-2">Zutaten oder Unverträglichkeiten — solche Gerichte zeigen wir dir seltener.</p>
+        <div className="bg-surface border border-border rounded-2xl p-3">
+          {dislikes.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-2.5">
+              {dislikes.map((d) => (
+                <span key={d} className="inline-flex items-center gap-1 pl-2.5 pr-1 py-1 rounded-full bg-[#bd5138]/10 text-[#bd5138] text-xs font-medium">
+                  {d}
+                  <button onClick={() => removeDislike(d)} aria-label={`${d} entfernen`} className="w-4 h-4 rounded-full flex items-center justify-center active:scale-90 transition-transform">
+                    <X className="w-3 h-3" />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+          <div className="flex items-center gap-2">
+            <input
+              value={dislikeInput}
+              onChange={(e) => setDislikeInput(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addDislike(dislikeInput); } }}
+              placeholder="z.B. Tomaten, Pilze …"
+              className="flex-1 min-w-0 bg-transparent text-sm text-text-primary placeholder:text-text-muted/60 outline-none py-1"
+            />
+            {dislikeInput.trim() && (
+              <button onClick={() => addDislike(dislikeInput)} className="shrink-0 text-xs font-semibold text-accent px-2 py-1 rounded-lg active:scale-95 transition-transform">
+                Hinzufügen
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* Vorschlag */}
       <button
         onClick={onSuggest}
@@ -1779,6 +1993,8 @@ export default function RezeptePage() {
   const [index, setIndex] = useState(0);
   const [detail, setDetail] = useState<Recipe | null>(null);
   const [verdicts, setVerdicts] = useState<Record<string, Verdict>>({});
+  const [ratings, setRatings] = useState<Record<string, number>>({});
+  const [dislikes, setDislikes] = useState<string[]>([]);
   const [history, setHistory] = useState<string[]>([]);
   const [deckList, setDeckList] = useState<Recipe[]>([]);
   const [deckMode, setDeckMode] = useState<"new" | "all">("new"); // new = nur ungeswipte, all = alles außer „nö"
@@ -1797,10 +2013,26 @@ export default function RezeptePage() {
   const verdictsRef = useRef<Record<string, Verdict>>({});
   const filteredRef = useRef<Recipe[]>([]);
   const startedRef = useRef(false); // true, sobald in dieser Deck-Runde geswipt wurde
+  const profileRef = useRef<Record<string, number>>({});
+  const dislikesRef = useRef<string[]>([]);
+  const countsRef = useRef<TrendCounts>({});
   const toast = useToast();
+
+  // Deck-Reihenfolge: nach Geschmacksprofil (Lieblingszutaten zuerst), dann
+  // Beliebtheit, dann Datum. Liest aktuelle Werte aus Refs → stabile Funktion.
+  const orderDeck = useCallback((list: Recipe[]) => {
+    const prof = profileRef.current, dis = dislikesRef.current, cnt = countsRef.current;
+    return [...list].sort((a, b) =>
+      recipeScore(b, prof, dis) - recipeScore(a, prof, dis) ||
+      trendScore(cnt[b.slug]) - trendScore(cnt[a.slug]) ||
+      b.created.localeCompare(a.created),
+    );
+  }, []);
 
   useEffect(() => {
     setVerdicts(loadVerdicts());
+    setRatings(loadRatings());
+    setDislikes(loadDislikes());
     try {
       const n = localStorage.getItem(NAME_KEY);
       const id = localStorage.getItem(ID_KEY);
@@ -1821,20 +2053,22 @@ export default function RezeptePage() {
     })
       .then((r) => r.json())
       .then((d) => {
+        if (d.ratings) { setRatings(d.ratings); replaceRatings(d.ratings); }
+        if (Array.isArray(d.dislikes)) { setDislikes(d.dislikes); replaceDislikes(d.dislikes); }
         if (!d.verdicts) return;
         setVerdicts(d.verdicts);
         replaceVerdicts(d.verdicts);
         // Deck einmalig mit den Server-Bewertungen neu bauen — solange der User
         // in dieser Runde noch nicht selbst geswipt hat (sonst nicht anfassen).
         if (!startedRef.current) {
-          setDeckList(filteredRef.current.filter((r) => !d.verdicts[r.slug]));
+          setDeckList(orderDeck(filteredRef.current.filter((r) => !d.verdicts[r.slug])));
           setDeckMode("new");
           setIndex(0);
           setHistory([]);
         }
       })
       .catch(() => { /* offline egal */ });
-  }, [hydrated, guestId, guestName]);
+  }, [hydrated, guestId, guestName, orderDeck]);
 
   // Gruppen-Einladungslink `/?gruppe=CODE`: nach Login automatisch der Gruppe beitreten.
   useEffect(() => {
@@ -1863,9 +2097,9 @@ export default function RezeptePage() {
 
   // Abmelden: lokale Identität + Cache löschen → Auth-Gate erscheint wieder.
   const logout = useCallback(() => {
-    try { localStorage.removeItem(NAME_KEY); localStorage.removeItem(ID_KEY); localStorage.removeItem(FAV_KEY); } catch { /* ignore */ }
+    try { localStorage.removeItem(NAME_KEY); localStorage.removeItem(ID_KEY); localStorage.removeItem(FAV_KEY); localStorage.removeItem(RATE_KEY); localStorage.removeItem(DISLIKE_KEY); } catch { /* ignore */ }
     startedRef.current = false; setDeckList([]);
-    setGuestName(null); setGuestId(""); setVerdicts({}); setHistory([]); setIndex(0); setMode("swipe");
+    setGuestName(null); setGuestId(""); setVerdicts({}); setRatings({}); setDislikes([]); setHistory([]); setIndex(0); setMode("swipe");
   }, []);
 
   const handleVerdict = useCallback((r: Recipe, v: Verdict) => {
@@ -1899,6 +2133,68 @@ export default function RezeptePage() {
   const likeCount = Object.values(verdicts).filter((v) => v === "like").length;
   const superCount = Object.values(verdicts).filter((v) => v === "super").length;
 
+  // Verdict aus dem Detail-Sheet setzen (z.B. aus „Alle Gerichte") — ohne den
+  // Swipe-Index anzufassen. Gleicher Button nochmal = entfernen.
+  const setDetailVerdict = useCallback((r: Recipe, v: Verdict) => {
+    const next = verdicts[r.slug] === v ? null : v;
+    saveVerdict(r.slug, next);
+    setVerdicts((prev) => { const n = { ...prev }; if (next) n[r.slug] = next; else delete n[r.slug]; return n; });
+    if (guestId && guestName) {
+      postVerdict({ guestId, name: guestName, slug: r.slug, recipeName: r.name, category: r.category, verdict: next })
+        .then((res) => {
+          if ((next === "like" || next === "super") && res?.matches?.length) setMatch({ recipe: r, partners: res.matches });
+        });
+    }
+  }, [verdicts, guestId, guestName]);
+
+  // Sterne-Bewertung (nach dem Kochen). stars null = entfernen.
+  const handleRating = useCallback((r: Recipe, stars: number | null) => {
+    saveRatingLocal(r.slug, stars);
+    setRatings((prev) => { const n = { ...prev }; if (stars) n[r.slug] = stars; else delete n[r.slug]; return n; });
+    if (guestId && guestName) {
+      fetch("/api/rating", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ guestId, name: guestName, slug: r.slug, recipeName: r.name, category: r.category, stars }),
+      }).catch(() => { /* offline egal */ });
+    }
+  }, [guestId, guestName]);
+
+  // „Was ich nicht mag" speichern (lokal + Server).
+  const saveDislikes = useCallback((list: string[]) => {
+    const clean = Array.from(new Set(list.map((d) => d.trim().toLowerCase()).filter((d) => d.length >= 2))).slice(0, 30);
+    setDislikes(clean);
+    replaceDislikes(clean);
+    if (guestId) {
+      fetch("/api/preferences", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ guestId, name: guestName, dislikes: clean }),
+      }).catch(() => { /* offline egal */ });
+    }
+  }, [guestId, guestName]);
+
+  // Geschmacksprofil: Tag-Gewichte aus Likes/Superlikes/Sternen (Nö = leichter Malus).
+  const profile = useMemo(() => {
+    const p: Record<string, number> = {};
+    const add = (tags: string[], w: number) => { for (const t of tags) p[t] = (p[t] ?? 0) + w; };
+    for (const r of recipes) {
+      const v = verdicts[r.slug];
+      if (v === "like") add(r.tags, 1);
+      else if (v === "super") add(r.tags, 2);
+      else if (v === "nope") add(r.tags, -1);
+      const st = ratings[r.slug] ?? 0;
+      if (st >= 4) add(r.tags, st === 5 ? 2 : 1);
+      else if (st > 0 && st <= 2) add(r.tags, -1);
+    }
+    return p;
+  }, [recipes, verdicts, ratings]);
+
+  // Refs für den Deck-Aufbau (Snapshot liest aktuelle Werte ohne Neu-Rendern).
+  useEffect(() => { profileRef.current = profile; }, [profile]);
+  useEffect(() => { dislikesRef.current = dislikes; }, [dislikes]);
+  useEffect(() => { countsRef.current = counts; }, [counts]);
+
   useEffect(() => {
     fetch("/api/recipes", { cache: "no-store" })
       .then((r) => r.json())
@@ -1928,22 +2224,22 @@ export default function RezeptePage() {
   // auch nach „Nochmal von vorn". Snapshot = stabile Reihenfolge beim Wischen.
   useEffect(() => {
     const v = verdictsRef.current;
-    setDeckList(filtered.filter((r) => !v[r.slug]));
+    setDeckList(orderDeck(filtered.filter((r) => !v[r.slug])));
     setDeckMode("new");
     setIndex(0);
     setHistory([]);
     startedRef.current = false;
-  }, [filtered]);
+  }, [filtered, orderDeck]);
 
   // „Nochmal von vorn": zeigt wieder alles AUSSER den abgelehnten Gerichten.
   const resetDeck = useCallback(() => {
     const v = verdictsRef.current;
-    setDeckList(filtered.filter((r) => v[r.slug] !== "nope"));
+    setDeckList(orderDeck(filtered.filter((r) => v[r.slug] !== "nope")));
     setDeckMode("all");
     setIndex(0);
     setHistory([]);
     startedRef.current = false;
-  }, [filtered]);
+  }, [filtered, orderDeck]);
 
   // Trending-Zähler: einmal beim Start (für Raster-Badges + Abend-Reihenfolge) …
   useEffect(() => {
@@ -1976,6 +2272,7 @@ export default function RezeptePage() {
   }, [recipes]);
 
   // Raster-Liste: Kategorie-Filter + Suche + Sortierung nach Beliebtheit.
+  // Gerichte mit „nicht gemocht"-Zutaten sinken ans Ende.
   const gridRecipes = useMemo(() => {
     const q = search.trim().toLowerCase();
     let list = filtered;
@@ -1987,10 +2284,26 @@ export default function RezeptePage() {
           r.category.toLowerCase().includes(q),
       );
     }
-    return [...list].sort(
-      (a, b) => trendScore(counts[b.slug]) - trendScore(counts[a.slug]) || b.created.localeCompare(a.created),
-    );
-  }, [filtered, search, counts]);
+    return [...list].sort((a, b) => {
+      const da = dislikeHits(a, dislikes).length ? 1 : 0;
+      const db = dislikeHits(b, dislikes).length ? 1 : 0;
+      if (da !== db) return da - db;
+      return trendScore(counts[b.slug]) - trendScore(counts[a.slug]) || b.created.localeCompare(a.created);
+    });
+  }, [filtered, search, counts, dislikes]);
+
+  // „Für dich": beste noch nicht geswipte Gerichte nach Geschmacksprofil.
+  // Kaltstart (kein Profil) → leer, damit keine sinnlose Reihe erscheint.
+  const forYou = useMemo(() => {
+    if (Object.keys(profile).length === 0) return [];
+    return recipes
+      .filter((r) => !verdicts[r.slug])
+      .map((r) => ({ r, s: recipeScore(r, profile, dislikes) }))
+      .filter((x) => x.s > 0)
+      .sort((a, b) => b.s - a.s || trendScore(counts[b.r.slug]) - trendScore(counts[a.r.slug]))
+      .slice(0, 12)
+      .map((x) => x.r);
+  }, [recipes, verdicts, profile, dislikes, counts]);
 
   // Suchfeld beim Scrollen dezent ausblenden, kurz nach Stillstand wieder einblenden.
   const onGridScroll = useCallback(() => {
@@ -2159,10 +2472,13 @@ export default function RezeptePage() {
             guestName={guestName ?? ""}
             recipes={recipes}
             verdicts={verdicts}
+            ratings={ratings}
+            dislikes={dislikes}
             onOpen={setDetail}
             onSuggest={() => setSuggestOpen(true)}
             onLogout={logout}
             onPlanEvening={startEvening}
+            onSaveDislikes={saveDislikes}
           />
         ) : mode === "swipe" ? (
           eveningGroup ? (
@@ -2255,6 +2571,26 @@ export default function RezeptePage() {
           )
         ) : gridRecipes.length > 0 ? (
           <>
+            {/* „Für dich" — personalisierte Empfehlungen (nur ohne Suche/Filter) */}
+            {forYou.length > 0 && !search.trim() && activeCat === "Alle" && (
+              <div className="mb-5">
+                <div className="flex items-baseline gap-1.5 mb-2">
+                  <Sparkles className="w-4 h-4 text-accent self-center" />
+                  <h2 className="text-sm font-bold text-text-primary">Für dich</h2>
+                  <span className="text-[11px] text-text-muted">nach deinem Geschmack</span>
+                </div>
+                <div className="flex gap-3 overflow-x-auto scrollbar-none -mx-4 px-4 pb-1">
+                  {forYou.map((r) => (
+                    <button key={r.slug} onClick={() => setDetail(r)} className="shrink-0 w-36 text-left active:scale-[0.98] transition-transform">
+                      <div className="relative w-36 h-24 rounded-xl overflow-hidden bg-surface-elevated border border-border">
+                        <RecipeImage r={r} w={400} className="w-full h-full object-cover" />
+                      </div>
+                      <p className="text-xs font-semibold text-text-primary mt-1.5 leading-snug line-clamp-2">{r.name}</p>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             <RecipeGrid recipes={gridRecipes} onOpen={setDetail} verdicts={verdicts} counts={counts} />
             <div className="h-24 shrink-0" />
           </>
@@ -2287,7 +2623,17 @@ export default function RezeptePage() {
 
       {/* Detail-Sheet */}
       <AnimatePresence>
-        {detail && <RecipeDetail r={detail} onClose={() => setDetail(null)} />}
+        {detail && (
+          <RecipeDetail
+            r={detail}
+            onClose={() => setDetail(null)}
+            verdict={verdicts[detail.slug]}
+            onVerdict={(v) => setDetailVerdict(detail, v)}
+            rating={ratings[detail.slug] ?? 0}
+            onRate={(n) => handleRating(detail, n)}
+            dislikeHitList={dislikeHits(detail, dislikes)}
+          />
+        )}
       </AnimatePresence>
 
       {/* Vorschlag einreichen */}

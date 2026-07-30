@@ -58,6 +58,67 @@ export interface Recipe {
   ingredients: IngredientGroup[];
   steps: string[];
   tips: string[];
+  /** Abgeleitete Zutaten-/Küchen-Tags für Empfehlungen (z.B. hähnchen, pasta, käse, vegetarisch) */
+  tags: string[];
+}
+
+// ── Zutaten-/Küchen-Tags (für Empfehlungen "könnte dir gefallen") ──────────────
+// Kuratiertes Lexikon: Schlüsselwort (kleingeschrieben) → kanonischer Tag.
+// Bewusst robust statt vollständig — deckt die häufigen Bausteine ab.
+const TAG_LEXICON: { tag: string; patterns: string[] }[] = [
+  // Proteine
+  { tag: "hähnchen", patterns: ["hähnchen", "haehnchen", "hühn", "huhn", "chicken", "poulet", "geflügel", "pute", "truthahn"] },
+  { tag: "rind", patterns: ["rind", "beef", "hackfleisch", "steak", "gulasch", "roastbeef", "tafelspitz"] },
+  { tag: "schwein", patterns: ["schwein", "pork", "speck", "bacon", "schinken", "kassler", "bratwurst", "salami", "chorizo", "pancetta"] },
+  { tag: "fisch", patterns: ["fisch", "lachs", "salmon", "thunfisch", "tuna", "garnele", "shrimp", "scampi", "forelle", "kabeljau", "dorsch", "meeresfrüchte", "sardine", "hering", "makrele"] },
+  { tag: "lamm", patterns: ["lamm", "lamb"] },
+  { tag: "tofu", patterns: ["tofu", "tempeh", "sojaschnetzel", "sojagranulat"] },
+  { tag: "ei", patterns: ["spiegelei", "rührei", "ruehrei", "omelett", "omelette", "eier", "pochiert", "tamago", "frittata", "shakshuka"] },
+  // Basis / Kohlenhydrate
+  { tag: "pasta", patterns: ["pasta", "nudel", "spaghetti", "penne", "lasagne", "tagliatelle", "fusilli", "makkaroni", "ravioli", "spätzle", "spaetzle", "tortellini"] },
+  { tag: "reis", patterns: ["reis", "risotto", "sushi", "paella", "jambalaya"] },
+  { tag: "kartoffel", patterns: ["kartoffel", "potato", "pommes", "püree", "pueree", "bratkartoffel", "rösti", "roesti", "gnocchi"] },
+  { tag: "brot", patterns: ["brot", "toast", "sandwich", "burger", "wrap", "tortilla", "baguette", "brötchen", "broetchen", "focaccia", "pita", "naan", "bun"] },
+  { tag: "getreide", patterns: ["couscous", "bulgur", "quinoa", "haferflocken", "hafer", "oats", "porridge", "polenta"] },
+  // Milchprodukte
+  { tag: "käse", patterns: ["käse", "kaese", "cheese", "mozzarella", "parmesan", "feta", "gouda", "cheddar", "ricotta", "frischkäse", "halloumi", "burrata", "gruyère"] },
+  { tag: "sahne", patterns: ["sahne", "cream", "crème", "creme fraiche", "schmand", "mascarpone", "kokosmilch"] },
+  // Gemüse / häufige Zutaten (auch für "Was ich nicht mag")
+  { tag: "tomate", patterns: ["tomate", "tomato", "passata", "sugo"] },
+  { tag: "pilz", patterns: ["pilz", "champignon", "mushroom", "steinpilz", "pfifferling", "shiitake"] },
+  { tag: "spinat", patterns: ["spinat", "spinach"] },
+  { tag: "brokkoli", patterns: ["brokkoli", "broccoli"] },
+  { tag: "paprika", patterns: ["paprika", "bell pepper"] },
+  { tag: "zwiebel", patterns: ["zwiebel", "onion", "schalotte"] },
+  { tag: "knoblauch", patterns: ["knoblauch", "garlic"] },
+  { tag: "avocado", patterns: ["avocado", "guacamole"] },
+  { tag: "kürbis", patterns: ["kürbis", "kuerbis", "pumpkin", "hokkaido"] },
+  { tag: "aubergine", patterns: ["aubergine", "eggplant"] },
+  { tag: "zucchini", patterns: ["zucchini", "courgette"] },
+  { tag: "spargel", patterns: ["spargel", "asparagus"] },
+  { tag: "mais", patterns: ["mais", "corn"] },
+  { tag: "linse", patterns: ["linse", "lentil"] },
+  { tag: "bohne", patterns: ["bohne", "kidneybohne", "kichererbse", "chickpea"] },
+  { tag: "kokos", patterns: ["kokos", "coconut"] },
+  // Küche / Charakter
+  { tag: "asiatisch", patterns: ["asia", "asiat", "sojasauce", "sojasoße", "teriyaki", "curry", "ingwer", "wok", "ramen", "udon", "miso", "kimchi", "thai", "japan", "korean", "chinesisch", "szechuan"] },
+  { tag: "mexikanisch", patterns: ["mexi", "taco", "burrito", "quesadilla", "enchilada", "jalapeño", "jalapeno", "fajita"] },
+  { tag: "scharf", patterns: ["chili", "sriracha", "harissa", "sambal", "peperoni"] },
+  { tag: "süß", patterns: ["dessert", "schoko", "chocolate", "kuchen", "cookie", "keks", "pancake", "waffel", "muffin", "vanille", "karamell", "caramel", "honig", "mousse", "pudding", "beere", "erdbeer", "banane", "zimt"] },
+];
+
+const MEAT_TAGS = new Set(["hähnchen", "rind", "schwein", "fisch", "lamm"]);
+
+/** Leitet Tags aus Name + Beschreibung + Zutatentext ab. */
+function deriveTags(blob: string): string[] {
+  const b = " " + blob.toLowerCase() + " ";
+  const tags = new Set<string>();
+  for (const { tag, patterns } of TAG_LEXICON) {
+    if (patterns.some((p) => b.includes(p))) tags.add(tag);
+  }
+  // vegetarisch, wenn nichts Fleischiges/Fischiges erkannt wurde
+  if (![...MEAT_TAGS].some((t) => tags.has(t))) tags.add("vegetarisch");
+  return [...tags];
 }
 
 // ── Helpers ───────────────────────────────────────────────────
@@ -252,6 +313,11 @@ export function parseRecipeFile(filePath: string, _imgDir: string | null): Recip
       : gallery;
 
     const overview = parseOverview(content);
+    const ingredients = parseIngredients(content);
+    const name = String(fm.name ?? slug);
+    const description = String(fm.Kurzbeschreibung ?? "");
+    const ingredientBlob = ingredients.flatMap((g) => [g.group, ...g.items]).join(" ");
+    const tags = deriveTags(`${name} ${description} ${ingredientBlob}`);
 
     // erstellt kann als Date-Objekt geparst werden
     const rawCreated = fm.erstellt;
@@ -261,8 +327,8 @@ export function parseRecipeFile(filePath: string, _imgDir: string | null): Recip
 
     return {
       slug,
-      name: String(fm.name ?? slug),
-      description: String(fm.Kurzbeschreibung ?? ""),
+      name,
+      description,
       category: String(fm.kategorie ?? "Sonstiges"),
       kcal: toNumber(fm.kalorien),
       protein: toNumber(fm.protein),
@@ -276,9 +342,10 @@ export function parseRecipeFile(filePath: string, _imgDir: string | null): Recip
       totalTime: overview.totalTime,
       portions: overview.portions,
       difficulty: overview.difficulty,
-      ingredients: parseIngredients(content),
+      ingredients,
       steps: parseSteps(content),
       tips: parseTips(content),
+      tags,
     };
   } catch (err) {
     console.error(`[recipes] parse failed: ${filePath}`, err);

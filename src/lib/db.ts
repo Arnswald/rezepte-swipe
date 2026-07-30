@@ -104,6 +104,27 @@ function getDb(): Database.Database {
       guest_id      TEXT NOT NULL UNIQUE,
       created_at    TEXT NOT NULL
     );
+
+    -- v8: Sterne-Bewertung NACH dem Kochen (getrennt vom Swipe-Verdict).
+    -- 1..5 Sterne, eine Zeile pro (guest_id, slug).
+    CREATE TABLE IF NOT EXISTS ratings (
+      guest_id    TEXT NOT NULL,
+      name        TEXT NOT NULL DEFAULT '',
+      slug        TEXT NOT NULL,
+      recipe_name TEXT NOT NULL DEFAULT '',
+      category    TEXT NOT NULL DEFAULT '',
+      stars       INTEGER NOT NULL,
+      updated_at  TEXT NOT NULL,
+      PRIMARY KEY (guest_id, slug)
+    );
+    CREATE INDEX IF NOT EXISTS idx_ratings_slug ON ratings(slug);
+
+    -- v8: schlanke Vorlieben pro Gast — "Was ich nicht mag" (kommagetrennte Tokens).
+    CREATE TABLE IF NOT EXISTS preferences (
+      guest_id   TEXT PRIMARY KEY,
+      dislikes   TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL
+    );
   `);
   globalForDb.rezepteDb = database;
   return database;
@@ -438,6 +459,8 @@ export function deleteGuestCascade(guestId: string): { verdicts: number; connect
     const connections = db.prepare(`DELETE FROM connections WHERE guest_a = ? OR guest_b = ?`).run(id, id).changes;
     db.prepare(`DELETE FROM group_members WHERE guest_id = ?`).run(id);
     db.prepare(`DELETE FROM evening_picks WHERE guest_id = ?`).run(id);
+    db.prepare(`DELETE FROM ratings WHERE guest_id = ?`).run(id);
+    db.prepare(`DELETE FROM preferences WHERE guest_id = ?`).run(id);
     db.prepare(`DELETE FROM accounts WHERE guest_id = ?`).run(id);
     const guest = db.prepare(`DELETE FROM guests WHERE guest_id = ?`).run(id).changes;
     return { verdicts, connections, guest };
@@ -511,6 +534,70 @@ export function getVerdictsForGuest(guestId: string): Record<string, Verdict> {
   const out: Record<string, Verdict> = {};
   for (const r of rows) out[r.slug] = r.verdict;
   return out;
+}
+
+// ── v8: Sterne-Bewertung nach dem Kochen ──────────────────────────────────────
+
+/** Setzt/aktualisiert eine Sterne-Bewertung (1..5). */
+export function upsertRating(v: {
+  guestId: string; name: string; slug: string; recipeName: string; category: string; stars: number; now: string;
+}) {
+  const stars = Math.max(1, Math.min(5, Math.round(v.stars)));
+  getDb().prepare(`
+    INSERT INTO ratings (guest_id, name, slug, recipe_name, category, stars, updated_at)
+    VALUES (@guestId, @name, @slug, @recipeName, @category, @stars, @now)
+    ON CONFLICT(guest_id, slug) DO UPDATE SET
+      name = @name, recipe_name = @recipeName, category = @category,
+      stars = @stars, updated_at = @now
+  `).run({ ...v, stars });
+}
+
+/** Entfernt eine Sterne-Bewertung. */
+export function deleteRating(guestId: string, slug: string) {
+  getDb().prepare(`DELETE FROM ratings WHERE guest_id = ? AND slug = ?`).run(guestId, slug);
+}
+
+/** Sterne eines Gasts als { slug: stars } — für Hydration. */
+export function getRatingsForGuest(guestId: string): Record<string, number> {
+  const rows = getDb().prepare(`SELECT slug, stars FROM ratings WHERE guest_id = ?`).all(guestId) as { slug: string; stars: number }[];
+  const out: Record<string, number> = {};
+  for (const r of rows) out[r.slug] = r.stars;
+  return out;
+}
+
+/** Öffentliche Sterne-Aggregate pro Gericht (Schnitt + Anzahl) — für Anzeige/Admin. */
+export function getRatingAverages(): Record<string, { avg: number; count: number }> {
+  const rows = getDb().prepare(`
+    SELECT slug, AVG(stars) AS avg, COUNT(*) AS count FROM ratings GROUP BY slug
+  `).all() as { slug: string; avg: number; count: number }[];
+  const out: Record<string, { avg: number; count: number }> = {};
+  for (const r of rows) out[r.slug] = { avg: Math.round(r.avg * 10) / 10, count: r.count };
+  return out;
+}
+
+// ── v8: Vorlieben ("Was ich nicht mag") ───────────────────────────────────────
+
+/** Speichert die Abneigungen eines Gasts (normalisierte, kleingeschriebene Tokens). */
+export function setDislikes(guestId: string, dislikes: string[], now: string) {
+  const clean = Array.from(
+    new Set(
+      dislikes
+        .map((d) => d.trim().toLowerCase())
+        .filter((d) => d.length >= 2 && d.length <= 40),
+    ),
+  ).slice(0, 30);
+  getDb().prepare(`
+    INSERT INTO preferences (guest_id, dislikes, updated_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(guest_id) DO UPDATE SET dislikes = excluded.dislikes, updated_at = excluded.updated_at
+  `).run(guestId, clean.join(","), now);
+}
+
+/** Liest die Abneigungen eines Gasts als Token-Liste. */
+export function getDislikes(guestId: string): string[] {
+  const row = getDb().prepare(`SELECT dislikes FROM preferences WHERE guest_id = ?`).get(guestId) as { dislikes: string } | undefined;
+  if (!row?.dislikes) return [];
+  return row.dislikes.split(",").map((d) => d.trim()).filter(Boolean);
 }
 
 // ── v3.1: Gruppen ─────────────────────────────────────────────────────────────
