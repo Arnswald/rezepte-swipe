@@ -195,8 +195,15 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
   und übersteht die iOS-Safari-7-Tage-Löschung. „Abmelden" auf der Account-Seite.
   Routen: `/api/auth/register`, `/api/auth/login`, `/api/me`. guestId bleibt der
   Bearer (in localStorage); das Passwort ist der Weg, ihn woanders wiederzubekommen.
-- **Offen**: Vorschläge → n8n → Obsidian-Inbox (`01 Inbox/Rezept-Vorschläge.md`).
-  (Telegram-Push & n8n-Automationen aktuell **nicht** gewünscht.)
+- **v6 (LIVE-fähig, 30.07.2026): Rezept-Einreichung mit Bild → n8n → Obsidian.**
+  Vollformular „Rezept einreichen" (`SuggestSheet` in `page.tsx`): Name, Beschreibung,
+  Kategorie, Zutaten/Zubereitung (Freitext, eine Zeile = ein Punkt), Tipps, Quelle,
+  **Foto-Upload**. `/api/recipes/submit` (multipart): baut eine **fertige Vault-Template-
+  `.md`** (Frontmatter gequotet, 🛒 als `- [ ]`, 👨‍🍳 nummeriert), konvertiert das Bild
+  zu **WebP** (`sharp`), legt beides als Backup in `DATA_DIR/einreichungen/` ab **und**
+  POSTet an `N8N_SUGGEST_WEBHOOK` (Bild als Base64). **Die App schreibt NIE in den Vault**
+  — das Einsortieren macht **n8n** (Christian richtet den Flow ein: Webhook → optional
+  KI-Anreicherung → Bild + `.md` in den Vault, empfohlen erst in `01 Inbox/…` als Review).
 - **Ideen**: Reset/„nochmal von vorn" pro Gast, saisonale Trending-Gewichtung
   (Spargelzeit etc.), Gericht-Detail-Statistik im Admin, Export.
 
@@ -226,7 +233,8 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
 | `src/app/api/recipes/route.ts` | GET: alle Rezepte + Kategorien |
 | `src/app/api/recipes/trending/route.ts` | GET: öffentliche Beliebtheits-Zähler (keine Namen) |
 | `src/app/api/recipes/image/[name]/route.ts` | Bild → WebP, Disk-Cache |
-| `src/app/api/recipes/suggest/route.ts` | Gast-Vorschläge entgegennehmen |
+| `src/app/api/recipes/submit/route.ts` | POST (multipart): volles Rezept + Bild → Template-.md + WebP in `DATA_DIR/einreichungen/` + n8n-Webhook |
+| `src/app/api/recipes/suggest/route.ts` | Gast-Vorschläge (leichte Idee/Link) entgegennehmen |
 | `src/components/ui/` | NumberFlow, Lens, AnimatedInput, Toast |
 | `docker-compose.yml` | Referenz-Stack (RO-Mount, Envs) |
 | `DEPLOYMENT.md` | Schritt-für-Schritt live + Redeploy + ADMIN_PIN |

@@ -6,7 +6,7 @@ import {
   Loader2, ChevronRight, Clock, Users, Flame,
   LayoutGrid, Layers, X, ExternalLink, AlertCircle, Check,
   Heart, Star, RotateCcw, User, Search, Copy, UserPlus, Sparkles, LogOut,
-  CookingPot, UtensilsCrossed, ChefHat, Soup, Share2,
+  CookingPot, UtensilsCrossed, ChefHat, Soup, Share2, ImagePlus,
 } from "lucide-react";
 
 // Instagram-Glyph (aus lucide entfernt) als inline-SVG
@@ -771,15 +771,27 @@ function RecipeDetail({ r, onClose }: { r: Recipe; onClose: () => void }) {
   );
 }
 
-// ── Vorschlag einreichen (Gäste) ──────────────────────────────
+// ── Rezept einreichen (Gäste) ─────────────────────────────────
+// Volles Formular (Essentials + Bild). Geht an /api/recipes/submit (multipart) →
+// fertige Template-.md + WebP im DATA_DIR + n8n-Webhook → landet via n8n in Obsidian.
 
-function SuggestSheet({ onClose }: { onClose: () => void }) {
+function FieldLabel({ children }: { children: React.ReactNode }) {
+  return <label className="block text-[11px] font-semibold text-text-muted uppercase tracking-wide mb-1">{children}</label>;
+}
+
+function SuggestSheet({ onClose, defaultName }: { onClose: () => void; defaultName?: string }) {
   const toast = useToast();
   const prefersReduced = useReducedMotion();
+  const [submitter, setSubmitter] = useState(defaultName ?? "");
   const [name, setName] = useState("");
-  const [link, setLink] = useState("");
-  const [idea, setIdea] = useState("");
-  const [note, setNote] = useState("");
+  const [description, setDescription] = useState("");
+  const [category, setCategory] = useState("Hauptgericht");
+  const [ingredients, setIngredients] = useState("");
+  const [steps, setSteps] = useState("");
+  const [tips, setTips] = useState("");
+  const [source, setSource] = useState("");
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
 
   useEffect(() => {
@@ -787,24 +799,35 @@ function SuggestSheet({ onClose }: { onClose: () => void }) {
     return () => { document.body.style.overflow = ""; };
   }, []);
 
+  const pickImage = (f: File | null) => {
+    setImageFile(f);
+    setImagePreview((prev) => { if (prev) URL.revokeObjectURL(prev); return f ? URL.createObjectURL(f) : null; });
+  };
+
+  const inputCls = "w-full px-3 py-2.5 rounded-xl bg-surface-elevated border border-border text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent";
+
   const submit = async () => {
-    if (!idea.trim() && !link.trim()) {
-      toast.error("Fast!", "Gib eine Idee oder einen Link an.");
-      return;
-    }
+    if (!name.trim()) { toast.error("Fast!", "Gib dem Rezept einen Namen."); return; }
+    if (!ingredients.trim() && !steps.trim()) { toast.error("Fast!", "Zutaten oder Zubereitung fehlen."); return; }
     setSending(true);
     try {
-      const res = await fetch("/api/recipes/suggest", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, idea, link, note }),
-      });
+      const fd = new FormData();
+      fd.append("name", name);
+      fd.append("description", description);
+      fd.append("category", category);
+      fd.append("ingredients", ingredients);
+      fd.append("steps", steps);
+      fd.append("tips", tips);
+      fd.append("source", source);
+      fd.append("submittedBy", submitter);
+      if (imageFile) fd.append("image", imageFile);
+      const res = await fetch("/api/recipes/submit", { method: "POST", body: fd });
+      const d = await res.json().catch(() => ({}));
       if (res.ok) {
-        toast.success("Danke!", "Dein Vorschlag ist bei Christian gelandet 🍽️");
+        toast.success("Danke!", "Dein Rezept ist bei Christian gelandet 🍽️");
         onClose();
       } else {
-        const d = await res.json().catch(() => ({}));
-        toast.error("Hat nicht geklappt", d.error ?? "Versuch's gleich nochmal.");
+        toast.error("Hat nicht geklappt", (d.error as string) ?? "Versuch's gleich nochmal.");
       }
     } catch {
       toast.error("Keine Verbindung", "Versuch's gleich nochmal.");
@@ -822,32 +845,80 @@ function SuggestSheet({ onClose }: { onClose: () => void }) {
       <motion.div
         initial={{ y: prefersReduced ? 0 : "100%" }} animate={{ y: 0 }} exit={{ y: prefersReduced ? 0 : "100%" }}
         transition={prefersReduced ? { duration: 0 } : { type: "spring", damping: 34, stiffness: 300 }}
-        className="relative w-full sm:max-w-md bg-surface sm:rounded-2xl rounded-t-2xl border border-border p-5 space-y-4"
+        className="relative w-full sm:max-w-md max-h-[92vh] overflow-y-auto bg-surface sm:rounded-2xl rounded-t-2xl border border-border p-5 space-y-4"
       >
-        <div className="flex items-start justify-between">
+        <div className="flex items-start justify-between sticky top-0 -mt-1 pt-1 bg-surface z-10">
           <div>
-            <h2 className="text-lg font-extrabold text-text-primary tracking-tight">Rezept vorschlagen</h2>
-            <p className="text-xs text-text-muted mt-0.5">Instagram-Link oder Idee — Christian baut's nach.</p>
+            <h2 className="text-lg font-extrabold text-text-primary tracking-tight">Rezept einreichen</h2>
+            <p className="text-xs text-text-muted mt-0.5">Fülls aus — landet in Christians Kochbuch.</p>
           </div>
           <button onClick={onClose} aria-label="Schließen" className="p-1.5 rounded-lg text-text-muted hover:text-text-primary">
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        <div className="space-y-3">
-          <AnimatedInput label="Dein Name" value={name} onChange={setName} />
-          <AnimatedInput label="Instagram-Link (falls vorhanden)" value={link} onChange={setLink} inputMode="url" />
-          <AnimatedInput label="Idee / Gericht" value={idea} onChange={setIdea} />
-          <AnimatedInput label="Notiz (optional)" value={note} onChange={setNote} />
+        <div className="space-y-3.5">
+          <AnimatedInput label="Dein Name" value={submitter} onChange={setSubmitter} />
+          <AnimatedInput label="Name des Gerichts" value={name} onChange={setName} />
+          <AnimatedInput label="Kurzbeschreibung" value={description} onChange={setDescription} />
+
+          <div>
+            <FieldLabel>Kategorie</FieldLabel>
+            <select value={category} onChange={(e) => setCategory(e.target.value)} className={inputCls}>
+              {["Frühstück", "Hauptgericht", "Dessert"].map((c) => (
+                <option key={c} value={c}>{catLabel(c)}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <FieldLabel>Zutaten — eine pro Zeile</FieldLabel>
+            <textarea value={ingredients} onChange={(e) => setIngredients(e.target.value)} rows={4}
+              placeholder={"200 g Mehl\n2 Eier\n1 Prise Salz"} className={`${inputCls} resize-none leading-relaxed`} />
+          </div>
+
+          <div>
+            <FieldLabel>Zubereitung — ein Schritt pro Zeile</FieldLabel>
+            <textarea value={steps} onChange={(e) => setSteps(e.target.value)} rows={4}
+              placeholder={"Ofen auf 180°C vorheizen\nAlles verrühren\n25 Min backen"} className={`${inputCls} resize-none leading-relaxed`} />
+          </div>
+
+          <div>
+            <FieldLabel>Tipps (optional)</FieldLabel>
+            <textarea value={tips} onChange={(e) => setTips(e.target.value)} rows={2}
+              placeholder="Schmeckt auch mit …" className={`${inputCls} resize-none leading-relaxed`} />
+          </div>
+
+          <AnimatedInput label="Quelle / Link (optional)" value={source} onChange={setSource} inputMode="url" />
+
+          <div>
+            <FieldLabel>Foto (optional)</FieldLabel>
+            {imagePreview ? (
+              <div className="relative rounded-xl overflow-hidden border border-border">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={imagePreview} alt="Vorschau" className="w-full max-h-52 object-cover" />
+                <button onClick={() => pickImage(null)} aria-label="Foto entfernen"
+                  className="absolute top-2 right-2 w-8 h-8 rounded-full bg-black/60 text-white flex items-center justify-center active:scale-95">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            ) : (
+              <label className="flex items-center justify-center gap-2 w-full py-6 rounded-xl border border-dashed border-border text-text-muted text-sm cursor-pointer active:scale-[0.99] transition-transform">
+                <ImagePlus className="w-5 h-5" /> Foto auswählen
+                <input type="file" accept="image/*" className="hidden"
+                  onChange={(e) => pickImage(e.target.files?.[0] ?? null)} />
+              </label>
+            )}
+          </div>
         </div>
 
         <button
           onClick={submit}
           disabled={sending}
-          className="w-full py-3 rounded-xl bg-accent text-white text-sm font-semibold active:scale-[0.98] transition-transform disabled:opacity-50 flex items-center justify-center gap-2"
+          className="w-full py-3 rounded-xl bg-accent text-white text-sm font-semibold active:scale-[0.98] transition-transform disabled:opacity-50 flex items-center justify-center gap-2 sticky bottom-0"
         >
           {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-          {sending ? "Sende…" : "Vorschlag absenden"}
+          {sending ? "Sende…" : "Rezept absenden"}
         </button>
       </motion.div>
     </div>
@@ -1485,7 +1556,7 @@ function AccountView({
         onClick={onSuggest}
         className="w-full py-3 rounded-xl bg-surface-elevated border border-border text-text-secondary text-sm font-semibold active:scale-[0.98] transition-transform"
       >
-        + Rezept vorschlagen
+        + Rezept einreichen
       </button>
 
       {/* Abmelden */}
@@ -1951,7 +2022,7 @@ export default function RezeptePage() {
 
       {/* Vorschlag einreichen */}
       <AnimatePresence>
-        {suggestOpen && <SuggestSheet onClose={() => setSuggestOpen(false)} />}
+        {suggestOpen && <SuggestSheet onClose={() => setSuggestOpen(false)} defaultName={guestName ?? ""} />}
       </AnimatePresence>
 
       {/* Match-Animation */}
