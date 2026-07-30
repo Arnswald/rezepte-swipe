@@ -127,6 +127,7 @@ export async function POST(req: Request) {
       const audioBytes = Buffer.from(await a.arrayBuffer());
       const mimetype = a.type || "audio/webm";
       const ext = audioExt(mimetype);
+      const providedName = get("name").slice(0, 120); // optionaler Gericht-Name aus dem Formular
 
       const base = `sprachnachricht-${Date.now().toString(36)}`;
       await writeFile(join(dir, `${base}.${ext}`), audioBytes);
@@ -144,6 +145,7 @@ export async function POST(req: Request) {
               mode: "audio",
               submittedBy,
               submittedAt: nowIso,
+              recipe: { name: providedName },
               audio: { filename: `aufnahme.${ext}`, mimetype, base64: audioBytes.toString("base64") },
               image: imageBuf ? { filename: "bild.webp", mimetype: "image/webp", base64: imageBuf.toString("base64") } : null,
             }),

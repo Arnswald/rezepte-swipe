@@ -861,20 +861,24 @@ function VoiceRecorder({ onAudioChange }: { onAudioChange: (blob: Blob | null) =
 
   return (
     <div className="flex flex-col items-center gap-3 py-2">
-      <button
+      <motion.button
         onClick={recording ? stop : start}
-        className={`relative w-20 h-20 rounded-full flex items-center justify-center text-white active:scale-95 transition-transform ${recording ? "bg-[#bd5138]" : "bg-accent"}`}
+        animate={recording ? { scale: [1, 1.05, 1] } : { scale: 1 }}
+        transition={recording ? { duration: 1.8, repeat: Infinity, ease: "easeInOut" } : { type: "spring", stiffness: 300, damping: 20 }}
+        className={`relative w-20 h-20 rounded-full flex items-center justify-center text-white ${recording ? "bg-[#bd5138]" : "bg-accent"}`}
         aria-label={recording ? "Aufnahme stoppen" : "Aufnahme starten"}
       >
-        {recording && (
+        {recording && [0, 0.9].map((delay, i) => (
           <motion.span
-            className="absolute inset-0 rounded-full border-2 border-[#bd5138]"
-            animate={{ scale: [1, 1.35], opacity: [0.6, 0] }}
-            transition={{ duration: 1.2, repeat: Infinity, ease: "easeOut" }}
+            key={i}
+            className="absolute inset-0 rounded-full bg-[#bd5138]/30"
+            initial={{ scale: 1, opacity: 0.5 }}
+            animate={{ scale: 2, opacity: 0 }}
+            transition={{ duration: 1.8, repeat: Infinity, ease: "easeOut", delay }}
           />
-        )}
-        {recording ? <Square className="w-7 h-7 fill-white" /> : <Mic className="w-8 h-8" />}
-      </button>
+        ))}
+        <span className="relative z-10">{recording ? <Square className="w-7 h-7 fill-white" /> : <Mic className="w-8 h-8" />}</span>
+      </motion.button>
       <div className="text-center">
         {recording ? (
           <>
@@ -935,6 +939,7 @@ function SuggestSheet({ onClose, defaultName }: { onClose: () => void; defaultNa
     if (mode === "audio") {
       if (!audioBlob) { toast.error("Fast!", "Nimm zuerst eine Sprachnachricht auf."); return; }
       fd.append("audio", audioBlob, "aufnahme.webm");
+      if (name.trim()) fd.append("name", name);
     } else {
       if (!name.trim()) { toast.error("Fast!", "Gib dem Rezept einen Namen."); return; }
       if (!ingredients.trim() && !steps.trim()) { toast.error("Fast!", "Zutaten oder Zubereitung fehlen."); return; }
@@ -1004,12 +1009,15 @@ function SuggestSheet({ onClose, defaultName }: { onClose: () => void; defaultNa
           <AnimatedInput label="Dein Name" value={submitter} onChange={setSubmitter} />
 
           {mode === "audio" ? (
-            <div className="rounded-2xl border border-border bg-surface-elevated/40 p-4">
-              <p className="text-xs text-text-secondary leading-relaxed mb-1 text-center">
-                Sprich das Rezept ein — <span className="font-semibold text-text-primary">Name, Zutaten, Zubereitung</span> und ein paar Tipps. Christian macht daraus automatisch ein Rezept.
-              </p>
-              <VoiceRecorder onAudioChange={setAudioBlob} />
-            </div>
+            <>
+              <AnimatedInput label="Name des Gerichts (optional)" value={name} onChange={setName} />
+              <div className="rounded-2xl border border-border bg-surface-elevated/40 p-4">
+                <p className="text-xs text-text-secondary leading-relaxed mb-1 text-center">
+                  Sprich das Rezept ein — <span className="font-semibold text-text-primary">Zutaten, Zubereitung</span> und ein paar Tipps. Christian macht daraus automatisch ein Rezept.
+                </p>
+                <VoiceRecorder onAudioChange={setAudioBlob} />
+              </div>
+            </>
           ) : (
             <>
               <AnimatedInput label="Name des Gerichts" value={name} onChange={setName} />
@@ -1091,7 +1099,7 @@ function SuggestSheet({ onClose, defaultName }: { onClose: () => void; defaultNa
               <div className="text-3xl">📸</div>
               <div>
                 <h3 className="text-base font-bold text-text-primary">Hast du ein Foto vom Gericht?</h3>
-                <p className="text-xs text-text-muted mt-1 leading-relaxed">Ein Bild macht das Rezept viel schöner — kein Muss. Sonst erstellt Christian automatisch eins.</p>
+                <p className="text-xs text-text-muted mt-1 leading-relaxed">Ein Bild macht das Rezept viel schöner — kein Muss.</p>
               </div>
               <button
                 onClick={() => setShowImageReminder(false)}
