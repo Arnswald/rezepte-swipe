@@ -21,37 +21,18 @@ export function useTheme() {
 }
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  const [theme, setThemeState] = useState<Theme>("system");
-  const [resolved, setResolved] = useState<"light" | "dark">("light");
+  // Bewusste Entscheidung: nur das beige (helle) Design. Kein Dark-Mode mehr —
+  // Christian will überall den gleichen warmen Look (iPhone = Mac = beige).
+  const [theme] = useState<Theme>("light");
 
   useEffect(() => {
-    const stored = localStorage.getItem("rezepte-theme") as Theme | null;
-    if (stored) setThemeState(stored);
+    document.documentElement.classList.remove("dark");
   }, []);
 
-  useEffect(() => {
-    const root = document.documentElement;
-    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
-
-    function apply() {
-      const isDark =
-        theme === "dark" || (theme === "system" && mediaQuery.matches);
-      root.classList.toggle("dark", isDark);
-      setResolved(isDark ? "dark" : "light");
-    }
-
-    apply();
-    mediaQuery.addEventListener("change", apply);
-    return () => mediaQuery.removeEventListener("change", apply);
-  }, [theme]);
-
-  function setTheme(t: Theme) {
-    setThemeState(t);
-    localStorage.setItem("rezepte-theme", t);
-  }
+  function setTheme(_t: Theme) { /* Dark-Mode deaktiviert — bewusst no-op */ }
 
   return (
-    <ThemeContext.Provider value={{ theme, setTheme, resolved }}>
+    <ThemeContext.Provider value={{ theme, setTheme, resolved: "light" }}>
       {children}
     </ThemeContext.Provider>
   );

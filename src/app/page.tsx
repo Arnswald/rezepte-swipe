@@ -3,7 +3,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { motion, AnimatePresence, useReducedMotion, useMotionValue, useTransform, animate } from "framer-motion";
 import {
-  Loader2, ChevronRight, Clock, Users, Flame,
+  Loader2, ChevronRight, ChevronDown, Clock, Users, Flame,
   X, ExternalLink, AlertCircle, Check,
   Heart, Star, RotateCcw, User, Search, Copy, UserPlus, Sparkles, LogOut,
   CookingPot, UtensilsCrossed, ChefHat, Soup, Share2, ImagePlus, Mic, Square, Pencil, BookOpen,
@@ -763,20 +763,11 @@ function RecipeDetail({
                 </div>
               </div>
               {onRate && (
-                <div>
-                  <p className="text-[11px] font-semibold text-text-muted uppercase tracking-wide mb-2">
-                    Schon gekocht? Bewerte es
-                  </p>
-                  <StarRating value={rating} onChange={onRate} />
-                </div>
-              )}
-              {onAddCook && (
-                <div className="pt-1 border-t border-border/70">
-                  <p className="text-[11px] font-semibold text-text-muted uppercase tracking-wide mb-2 mt-3">
-                    Bereits gekocht — festhalten
-                  </p>
+                <div className="pt-3 border-t border-border/70">
+                  <p className="text-[11px] font-semibold text-text-muted uppercase tracking-wide mb-2">Bereits gekocht?</p>
+                  {/* Verlauf */}
                   {cookEntries.length > 0 && (
-                    <div className="space-y-1.5 mb-2.5">
+                    <div className="space-y-1.5 mb-2">
                       {cookEntries.map((e) => (
                         <div key={e.id} className="flex items-center gap-2 text-xs">
                           <CookingPot className="w-3.5 h-3.5 text-accent shrink-0" />
@@ -793,30 +784,41 @@ function RecipeDetail({
                       ))}
                     </div>
                   )}
-                  <div className="flex items-center gap-1.5">
-                    <select
-                      value={cookPartner}
-                      onChange={(e) => setCookPartner(e.target.value)}
-                      className="flex-1 min-w-0 text-xs bg-surface border border-border rounded-lg px-2 py-1.5 text-text-secondary"
-                    >
-                      <option value="">Alleine</option>
-                      {friends.map((f) => (
-                        <option key={f.guestId} value={f.guestId}>mit {f.name}</option>
-                      ))}
-                    </select>
-                    <input
-                      type="date"
-                      value={cookDate}
-                      max={todayISO()}
-                      onChange={(e) => setCookDate(e.target.value)}
-                      className="text-xs bg-surface border border-border rounded-lg px-2 py-1.5 text-text-secondary"
-                    />
-                    <button
-                      onClick={() => onAddCook(cookPartner || null, cookDate || todayISO())}
-                      className="shrink-0 text-xs font-semibold text-white bg-accent px-3 py-1.5 rounded-lg active:scale-95 transition-transform"
-                    >
-                      Eintragen
-                    </button>
+                  {/* Neuer Eintrag: mit wem + Datum + Eintragen */}
+                  {onAddCook && (
+                    <div className="flex items-center gap-1.5">
+                      <div className="relative shrink-0">
+                        <select
+                          value={cookPartner}
+                          onChange={(e) => setCookPartner(e.target.value)}
+                          className="appearance-none min-w-[92px] text-xs bg-surface border border-border rounded-lg pl-2.5 pr-7 py-1.5 text-text-secondary"
+                        >
+                          <option value="">Alleine</option>
+                          {friends.map((f) => (
+                            <option key={f.guestId} value={f.guestId}>mit {f.name}</option>
+                          ))}
+                        </select>
+                        <ChevronDown className="w-3.5 h-3.5 text-text-muted absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      </div>
+                      <input
+                        type="date"
+                        value={cookDate}
+                        max={todayISO()}
+                        onChange={(e) => setCookDate(e.target.value)}
+                        className="flex-1 min-w-0 text-xs bg-surface border border-border rounded-lg px-2 py-1.5 text-text-secondary"
+                      />
+                      <button
+                        onClick={() => onAddCook(cookPartner || null, cookDate || todayISO())}
+                        className="shrink-0 text-xs font-semibold text-white bg-accent px-3 py-1.5 rounded-lg active:scale-95 transition-transform"
+                      >
+                        Eintragen
+                      </button>
+                    </div>
+                  )}
+                  {/* Bewertung (Sterne) */}
+                  <div className="flex items-center gap-2 mt-3">
+                    <span className="text-[11px] text-text-muted shrink-0">Bewertung</span>
+                    <StarRating value={rating} onChange={onRate} size={24} />
                   </div>
                 </div>
               )}
