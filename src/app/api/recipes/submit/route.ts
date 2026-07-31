@@ -167,6 +167,26 @@ export async function POST(req: Request) {
     const tips = get("tips").slice(0, 2000);
     const source = get("source").slice(0, 400);
 
+    // ── Link im „Quelle"-Feld → an die Scraping-Automation (WF10b) ────────────
+    // Steht dort ein Link (IG/Pinterest/Website), lassen wir das Rezept dort
+    // automatisch auslesen, statt das Formular manuell zu verarbeiten.
+    const linkInSource = source.match(/https?:\/\/[^\s]+/i);
+    if (linkInSource && env.N8N_LINK_WEBHOOK) {
+      const url = linkInSource[0].replace(/[).,\]]+$/, "");
+      let forwarded = false;
+      try {
+        await fetch(env.N8N_LINK_WEBHOOK, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ type: "recipe-link", url, name, submittedBy, submittedAt: nowIso }),
+        });
+        forwarded = true;
+      } catch (hookErr) {
+        console.warn("[submit] link-webhook fehlgeschlagen:", hookErr);
+      }
+      return NextResponse.json({ ok: true, mode: "link", url, forwarded });
+    }
+
     if (!name) return NextResponse.json({ error: "Bitte gib dem Rezept einen Namen." }, { status: 400 });
     if (!ingredients && !steps) {
       return NextResponse.json({ error: "Bitte Zutaten oder Zubereitung angeben." }, { status: 400 });

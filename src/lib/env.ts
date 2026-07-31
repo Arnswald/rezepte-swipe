@@ -12,6 +12,8 @@ export const env = {
   DATA_DIR: process.env.DATA_DIR ?? "./data",
   /** Optional (Phase 2): Vorschläge zusätzlich an einen n8n-Webhook posten */
   N8N_SUGGEST_WEBHOOK: process.env.N8N_SUGGEST_WEBHOOK,
+  /** Optional: Link im „Quelle"-Feld → an die Scraping-Automation (WF10b) posten */
+  N8N_LINK_WEBHOOK: process.env.N8N_LINK_WEBHOOK,
   /** PIN für die Admin-Statistik (/admin). Ohne PIN ist die Admin-Seite gesperrt. */
   ADMIN_PIN: process.env.ADMIN_PIN,
   /** Öffentliche Basis-URL — für absolute OG-/Teilen-Links (WhatsApp-Vorschau). */

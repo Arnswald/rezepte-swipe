@@ -1155,7 +1155,9 @@ function SuggestSheet({ onClose, defaultName }: { onClose: () => void; defaultNa
       const res = await fetch("/api/recipes/submit", { method: "POST", body: fd });
       const d = await res.json().catch(() => ({}));
       if (res.ok) {
-        toast.success("Danke!", mode === "audio"
+        toast.success("Danke!", d.mode === "link"
+          ? "Dein Link wird automatisch ausgelesen — das Rezept landet gleich bei Christian 🔗🍽️"
+          : mode === "audio"
           ? "Deine Sprachnachricht ist unterwegs — Christian macht ein Rezept draus 🍽️"
           : "Dein Rezept ist bei Christian gelandet 🍽️");
         onClose();
@@ -1248,7 +1250,12 @@ function SuggestSheet({ onClose, defaultName }: { onClose: () => void; defaultNa
                   placeholder="Schmeckt auch mit …" className={`${inputCls} resize-none leading-relaxed`} />
               </div>
 
-              <AnimatedInput label="Quelle / Link (optional)" value={source} onChange={setSource} inputMode="url" />
+              <div>
+                <AnimatedInput label="Quelle / Link (optional)" value={source} onChange={setSource} inputMode="url" />
+                <p className="text-[11px] text-text-muted mt-1 leading-snug">
+                  🔗 Instagram-, Pinterest- oder Website-Link? Reicht — wir lesen das Rezept automatisch aus. Die anderen Felder kannst du dann leer lassen.
+                </p>
+              </div>
             </>
           )}
 
@@ -1275,11 +1282,11 @@ function SuggestSheet({ onClose, defaultName }: { onClose: () => void; defaultNa
 
         <button
           onClick={handleSubmit}
-          disabled={sending || (mode === "audio" ? !audioBlob : !name.trim())}
+          disabled={sending || (mode === "audio" ? !audioBlob : (!name.trim() && !/https?:\/\//i.test(source)))}
           className="w-full py-3 rounded-xl bg-accent text-white text-sm font-semibold active:scale-[0.98] transition-transform disabled:opacity-50 flex items-center justify-center gap-2 sticky bottom-0"
         >
           {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-          {sending ? "Sende…" : mode === "audio" ? "Sprachnachricht absenden" : "Rezept absenden"}
+          {sending ? "Sende…" : mode === "audio" ? "Sprachnachricht absenden" : (/https?:\/\//i.test(source) && !name.trim() ? "Link auslesen lassen" : "Rezept absenden")}
         </button>
 
         {/* Foto-Erinnerung (nur Sprachnachricht ohne Bild) */}

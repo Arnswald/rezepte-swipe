@@ -104,7 +104,8 @@ mergen will: `kategorie:`-Frontmatter in `06 Research/Gerichte/*.md` ändern.
 | `DATA_DIR` | Schreibbares Volume: Bild-Cache + Vorschläge + `rezepte.db` | `/app/data` |
 | `ADMIN_PIN` | PIN für `/admin`. Ohne PIN ist die Admin-Seite gesperrt (503). | `4711` |
 | `SITE_URL` | Öffentliche Basis-URL für absolute OG-/Teilen-Links. Default: prod. | `https://rezepte.christianarns.de` |
-| `N8N_SUGGEST_WEBHOOK` | Optional: Vorschläge zusätzlich an n8n posten | — |
+| `N8N_SUGGEST_WEBHOOK` | Optional: Vorschläge (Text/Sprache) an n8n posten (WF14) | — |
+| `N8N_LINK_WEBHOOK` | Optional: Link im „Quelle"-Feld → Scraping-Automation (WF10b) | `https://n8n.christianarns.de/webhook/rezept-link` |
 | `TZ` | Zeitzone für Timestamps | `Europe/Berlin` |
 
 ## Deployment
