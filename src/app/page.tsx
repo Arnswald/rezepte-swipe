@@ -1034,11 +1034,6 @@ function VoiceRecorder({ onAudioChange }: { onAudioChange: (blob: Blob | null) =
     setRecording(false);
   };
 
-  const reset = () => {
-    if (audioUrl) URL.revokeObjectURL(audioUrl);
-    setAudioUrl(null); setSeconds(0); onAudioChange(null);
-  };
-
   const mmss = (s: number) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
   // Aufgenommen → Wiedergabe + Neu
@@ -1048,7 +1043,6 @@ function VoiceRecorder({ onAudioChange }: { onAudioChange: (blob: Blob | null) =
         <div className="flex items-center gap-2 text-xs font-semibold text-[#3f6b43]">
           <Check className="w-4 h-4" /> Aufnahme fertig
         </div>
-        {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
         <audio src={audioUrl} controls className="w-full" />
         <button onClick={start} className="inline-flex items-center gap-1.5 text-xs font-semibold text-accent">
           <RotateCcw className="w-3.5 h-3.5" /> Neu aufnehmen
@@ -1627,6 +1621,8 @@ function AccountView({
     } catch { /* offline egal */ }
   }, [guestId, guestName]);
 
+  // Laden beim Öffnen (setState passiert erst nach dem fetch, nicht synchron)
+  // eslint-disable-next-line react-hooks/set-state-in-effect
   useEffect(() => { load(); loadGroups(); }, [load, loadGroups]);
 
   const groupAction = useCallback(async (body: Record<string, unknown>): Promise<Record<string, unknown> | null> => {
@@ -2014,7 +2010,7 @@ function AccountView({
         </h3>
         {cooked.length === 0 ? (
           <p className="text-sm text-text-muted bg-surface border border-border rounded-2xl p-4">
-            Noch nichts eingetragen. Öffne ein Gericht → Sterne vergeben oder „bereits gekocht" festhalten (auch mit wem).
+            Noch nichts eingetragen. Öffne ein Gericht → Sterne vergeben oder „bereits gekocht“ festhalten (auch mit wem).
           </p>
         ) : (
           <div className="space-y-2">
@@ -2154,6 +2150,8 @@ export default function RezeptePage() {
     );
   }, []);
 
+  // localStorage gibt es erst im Browser → bewusst einmalig nach dem Mounten lesen.
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     setVerdicts(loadVerdicts());
     setRatings(loadRatings());
@@ -2166,6 +2164,7 @@ export default function RezeptePage() {
     } catch { /* ignore */ }
     setHydrated(true);
   }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   // Nach Login / beim Öffnen: Server-Bewertungen holen, damit der Stand auf jedem
   // Gerät stimmt (der Account kann anderswo geswipt haben).

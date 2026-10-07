@@ -119,8 +119,10 @@ export default function AdminPage() {
     groupApi("POST", { action: add ? "addMember" : "removeMember", groupId, guestId }), [groupApi]);
 
   // Beim Öffnen: gespeicherten PIN probieren
+  // sessionStorage gibt es erst im Browser → bewusst nach dem Mounten lesen
   useEffect(() => {
     const saved = sessionStorage.getItem(PIN_KEY);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (saved) { setPin(saved); load(saved); }
   }, [load]);
 
