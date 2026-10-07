@@ -284,7 +284,7 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
 | `src/app/api/admin/stats/route.ts` | GET (x-admin-pin): aggregierte Auswertung |
 | `src/app/api/admin/persons/route.ts` | GET/DELETE (x-admin-pin): Personen listen + löschen (kaskadiert Verdicts+Verbindungen) |
 | `src/app/api/admin/connections/route.ts` | POST/DELETE (x-admin-pin): zwei Personen verbinden/trennen |
-| `src/app/api/recipes/route.ts` | GET: alle Rezepte + Kategorien |
+| `src/app/api/recipes/route.ts` | GET: alle Rezepte + Kategorien. `?lite=1` ohne Zubereitung/Tipps (nutzt die App), `?slug=x` ein Rezept komplett (Detail lädt nach) |
 | `src/app/api/recipes/trending/route.ts` | GET: öffentliche Beliebtheits-Zähler (keine Namen) |
 | `src/app/api/recipes/image/[name]/route.ts` | Bild → WebP, Disk-Cache |
 | `src/app/api/recipes/submit/route.ts` | POST (multipart): volles Rezept + Bild → Template-.md + WebP in `DATA_DIR/einreichungen/` + n8n-Webhook |
@@ -292,6 +292,16 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
 | `src/components/ui/` | NumberFlow, Lens, AnimatedInput, Toast |
 | `docker-compose.yml` | Referenz-Stack (RO-Mount, Envs) |
 | `DEPLOYMENT.md` | Schritt-für-Schritt live + Redeploy + ADMIN_PIN |
+
+## Fallen (gelernt, iPhone-Durchsicht 08.10.2026)
+
+- **Lint lief nie:** FlatCompat + `eslint-config-next` 16 bricht mit „circular structure“ ab. Flat-Configs direkt importieren (`eslint.config.mjs`).
+- **Sheets:** `max-h-[92vh]` ist in Safari zu hoch (vh = große Ansicht ohne Leisten) → `dvh`. Scrollende Sheets brauchen `overscroll-contain`, unten `env(safe-area-inset-bottom)`.
+- **`navigator.share` abgebrochen** wirft `AbortError` → nicht in den Kopier-Fallback laufen.
+- **iOS feuert nach einem Tipp emulierte Maus-Events** (mouseenter ohne mouseleave) → Hover-Effekte (Lupe) nach Touch sperren.
+- **`touch-action` wirkt nur bis zum nächsten Scroll-Container** → `:where(*) { touch-action: manipulation }` in `globals.css`; framer-motion setzt am Drag-Element inline `none` und gewinnt.
+- **Tipps im Vault** stehen als `**Titel:** Text` (Doppelpunkt in den Sternchen) → Parser darf keinen zweiten anhängen.
+- **Headless-Test:** `next start` (Produktionsbuild) statt `next dev`, Chrome nur über `~/.local/bin/render-chrome --headless=new`. Messskripte der Durchsicht: CDP mit 390×844, Touch, 4G, CPU 4×.
 
 ## Konventionen
 
