@@ -280,14 +280,15 @@ function parseSteps(content: string): string[] {
   return steps;
 }
 
-/** Parst Tipps als Bullet-Liste */
+/** Parst Tipps als Bullet-Liste. „**Titel:** Text“ → „Titel: Text“ (Doppelpunkt
+ *  steht im Vault meist INNERHALB der Sternchen → sonst „Titel:: Text“). */
 function parseTips(content: string): string[] {
   const section = extractSection(content, "Tipps");
   const tips: string[] = [];
   for (const raw of section.split("\n")) {
     const line = raw.trim();
     const m = line.match(/^[-*]\s+(.*)$/);
-    if (m && m[1].trim()) tips.push(m[1].trim().replace(/^\*\*(.+?)\*\*:?\s*/, "$1: "));
+    if (m && m[1].trim()) tips.push(m[1].trim().replace(/^\*\*(.+?):?\*\*:?\s*/, "$1: "));
   }
   return tips;
 }
