@@ -29,7 +29,8 @@ export const metadata: Metadata = {
   },
   icons: {
     icon: [{ url: "/icon.svg", type: "image/svg+xml" }],
-    apple: "/apple-touch-icon.png",
+    // iOS-Stil wie die dunklen Standard-Apps (08.10.2026), neuer Name, damit iOS nicht das alte zwischenspeichert
+    apple: "/apple-touch-icon-v2.png",
   },
 };
 

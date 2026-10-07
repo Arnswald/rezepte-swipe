@@ -322,3 +322,5 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
   Diese App ist ab jetzt die **kanonische** Version. Verbesserungen hier machen;
   ins Dashboard nur zurückportieren, wenn Christian die interne Ansicht behalten will.
 ```
+
+- **App-Symbol (08.10.2026):** im Stil der dunklen iPhone-Standard-Apps (dunkler Verlauf, Gabel in Terrakotta, Wisch-Bogen zart): `public/apple-touch-icon-v2.png`, `icon-192-v2.png`, `icon-512-v2.png`; Quelle `tools/icon/gabel.svg` + `tools/icon/ios2.swift` (`swift ios2.swift gabel.svg out.png 0.74`). Neue Dateinamen, weil iOS Symbole festhält; alte Dateien bleiben.
