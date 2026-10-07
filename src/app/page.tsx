@@ -699,19 +699,22 @@ function RecipeDetail({
         animate={{ y: 0 }}
         exit={{ y: prefersReduced ? 0 : "100%" }}
         transition={prefersReduced ? { duration: 0 } : { type: "spring", damping: 34, stiffness: 300 }}
-        className="relative w-full sm:max-w-lg max-h-[92vh] overflow-y-auto bg-surface sm:rounded-2xl rounded-t-2xl border border-border"
+        className="relative w-full sm:max-w-lg max-h-[92dvh] overflow-y-auto overscroll-contain bg-surface sm:rounded-2xl rounded-t-2xl border border-border"
       >
+        {/* Schließen-Knopf klebt oben — bei langen Rezepten sonst nur ganz oben/unten erreichbar */}
+        <div className="sticky top-0 z-40 h-0">
+          <button
+            onClick={onClose}
+            aria-label="Schließen"
+            className="absolute top-3 right-3 w-9 h-9 rounded-full bg-black/60 backdrop-blur-sm text-white flex items-center justify-center active:scale-95 transition-transform"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
         {/* Header — swipebare Bilder-Galerie */}
         <div className="relative aspect-[16/10] w-full overflow-hidden bg-surface-elevated">
           <GalleryHeader r={r} />
           <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/85 to-transparent pointer-events-none" />
-          <button
-            onClick={onClose}
-            aria-label="Schließen"
-            className="absolute top-3 right-3 z-20 w-9 h-9 rounded-full bg-black/60 backdrop-blur-sm text-white flex items-center justify-center active:scale-95 transition-transform"
-          >
-            <X className="w-4 h-4" />
-          </button>
           <div className="absolute inset-x-0 bottom-0 p-4 pointer-events-none">
             <h2 className="text-white text-xl font-bold leading-tight drop-shadow">{r.name}</h2>
           </div>
@@ -735,7 +738,7 @@ function RecipeDetail({
           )}
         </AnimatePresence>
 
-        <div className="p-4 space-y-5">
+        <div className="p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] space-y-5">
           <p className="text-sm text-text-secondary leading-relaxed">{r.description}</p>
 
           {/* Bewerten + zum Account (funktioniert auch aus „Alle Gerichte") */}
@@ -1174,7 +1177,7 @@ function SuggestSheet({ onClose, defaultName }: { onClose: () => void; defaultNa
       <motion.div
         initial={{ y: prefersReduced ? 0 : "100%" }} animate={{ y: 0 }} exit={{ y: prefersReduced ? 0 : "100%" }}
         transition={prefersReduced ? { duration: 0 } : { type: "spring", damping: 34, stiffness: 300 }}
-        className="relative w-full sm:max-w-md max-h-[92vh] overflow-y-auto bg-surface sm:rounded-2xl rounded-t-2xl border border-border p-5 space-y-4"
+        className="relative w-full sm:max-w-md max-h-[92dvh] overflow-y-auto overscroll-contain bg-surface sm:rounded-2xl rounded-t-2xl border border-border p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] space-y-4"
       >
         <div className="flex items-start justify-between sticky top-0 -mt-1 pt-1 bg-surface z-10">
           <div>
@@ -1277,7 +1280,7 @@ function SuggestSheet({ onClose, defaultName }: { onClose: () => void; defaultNa
         <button
           onClick={handleSubmit}
           disabled={sending || (mode === "audio" ? !audioBlob : (!name.trim() && !/https?:\/\//i.test(source)))}
-          className="w-full py-3 rounded-xl bg-accent text-white text-sm font-semibold active:scale-[0.98] transition-transform disabled:opacity-50 flex items-center justify-center gap-2 sticky bottom-0"
+          className="w-full py-3 rounded-xl bg-accent text-white text-sm font-semibold active:scale-[0.98] transition-transform disabled:bg-[#dea89b] flex items-center justify-center gap-2 sticky bottom-[max(0.75rem,env(safe-area-inset-bottom))]"
         >
           {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
           {sending ? "Sende…" : mode === "audio" ? "Sprachnachricht absenden" : (/https?:\/\//i.test(source) && !name.trim() ? "Link auslesen lassen" : "Rezept absenden")}
@@ -1791,7 +1794,7 @@ function AccountView({
           <div className="flex justify-center py-6"><Loader2 className="w-4 h-4 text-text-muted animate-spin" /></div>
         ) : connections.length === 0 ? (
           <p className="text-sm text-text-muted bg-surface border border-border rounded-2xl p-4">
-            Noch niemand verbunden. Teile deinen Code oder gib oben einen ein.
+            Noch niemand verbunden. Teile deinen Freundescode oder gib unten einen ein.
           </p>
         ) : (
           <div className="space-y-4">
