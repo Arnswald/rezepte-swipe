@@ -35,8 +35,10 @@ export function ShareButton({
       try {
         await navigator.share({ title: name, text, url });
         return;
-      } catch {
-        // abgebrochen oder nicht erlaubt → still zum Fallback
+      } catch (e) {
+        // Abgebrochen (Share-Sheet weggewischt) → nichts tun, NICHT kopieren.
+        // Nur bei echtem Fehler (nicht erlaubt o.ä.) weiter zum Fallback.
+        if ((e as Error)?.name === "AbortError") return;
       }
     }
     // 2) Fallback: Link kopieren

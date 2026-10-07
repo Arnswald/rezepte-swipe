@@ -1672,7 +1672,7 @@ function AccountView({
     const url = (typeof window !== "undefined" ? window.location.origin : "") + `/?gruppe=${encodeURIComponent(code)}`;
     const text = `Lass uns gemeinsam Essen planen 🍽️\nTritt meiner Gruppe „${name}" bei:`;
     if (typeof navigator !== "undefined" && navigator.share) {
-      try { await navigator.share({ title: "Essen planen gemeinsam", text, url }); return; } catch { /* fallthrough */ }
+      try { await navigator.share({ title: "Essen planen gemeinsam", text, url }); return; } catch (e) { if ((e as Error)?.name === "AbortError") return; /* sonst Fallback */ }
     }
     try { await navigator.clipboard.writeText(`${text}\n${url}`); toast.success("Link kopiert", "Füg ihn z.B. in WhatsApp ein."); } catch { /* ignore */ }
   };
@@ -1691,7 +1691,7 @@ function AccountView({
   const invite = async () => {
     const text = inviteText();
     if (typeof navigator !== "undefined" && navigator.share) {
-      try { await navigator.share({ title: "Rezepte-Match", text }); return; } catch { /* fallthrough */ }
+      try { await navigator.share({ title: "Rezepte-Match", text }); return; } catch (e) { if ((e as Error)?.name === "AbortError") return; /* sonst Fallback */ }
     }
     try {
       await navigator.clipboard.writeText(text);
