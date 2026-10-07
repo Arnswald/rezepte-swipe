@@ -242,7 +242,7 @@ function MacroChips({ r, size = "md", animate = false }: { r: Recipe; size?: "sm
 
 // ── Bild mit Fallback ─────────────────────────────────────────
 
-function RecipeImage({ r, w, className }: { r: Recipe; w: 400 | 800 | 1200; className?: string }) {
+function RecipeImage({ r, w, className, eager = false }: { r: Recipe; w: 400 | 800 | 1200; className?: string; eager?: boolean }) {
   const [failed, setFailed] = useState(false);
   const url = r.imageExists ? imageUrl(r.image, w) : null;
 
@@ -258,7 +258,10 @@ function RecipeImage({ r, w, className }: { r: Recipe; w: 400 | 800 | 1200; clas
     <img
       src={url}
       alt={r.name}
-      loading="lazy"
+      loading={eager ? "eager" : "lazy"}
+      decoding="async"
+      fetchPriority={eager ? "high" : "auto"}
+      draggable={false}
       onError={() => setFailed(true)}
       className={className}
     />
@@ -298,7 +301,7 @@ function RecipeCardFace({
         aria-label={`${r.name} öffnen`}
         className="relative block w-full flex-1 min-h-0 rounded-2xl overflow-hidden bg-surface-elevated"
       >
-        <RecipeImage r={r} w={800} className="absolute inset-0 w-full h-full object-cover pointer-events-none" />
+        <RecipeImage r={r} w={800} eager className="absolute inset-0 w-full h-full object-cover pointer-events-none" />
         <span className="absolute bottom-2 right-2 px-2 py-1 rounded-full bg-black/45 backdrop-blur-sm text-white text-[10px] font-semibold flex items-center gap-0.5 pointer-events-none">
           Rezept <ChevronRight className="w-3 h-3" />
         </span>
@@ -398,7 +401,7 @@ function SwipeDeck({
               <div className="bg-surface rounded-[26px] shadow-[0_10px_30px_rgba(70,50,30,0.10)] border border-border p-3 h-full flex flex-col">
                 <div className="h-4 shrink-0" />
                 <div className="relative w-full flex-1 min-h-0 rounded-2xl overflow-hidden bg-surface-elevated">
-                  <RecipeImage r={recipe} w={400} className="absolute inset-0 w-full h-full object-cover" />
+                  <RecipeImage r={recipe} w={800} eager className="absolute inset-0 w-full h-full object-cover" />
                   <div className="absolute inset-0 bg-black/5" />
                 </div>
                 <div className="h-24 shrink-0" />

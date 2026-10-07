@@ -75,7 +75,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     <ToastContext.Provider value={api}>
       {children}
       {/* Toast-Stapel: unten mittig auf Mobile, unten rechts auf Desktop */}
-      <div className="fixed z-[100] bottom-6 md:bottom-4 left-1/2 -translate-x-1/2 md:left-auto md:right-4 md:translate-x-0 flex flex-col items-center md:items-end gap-2 w-[calc(100%-2rem)] max-w-sm pointer-events-none">
+      <div className="fixed z-[100] bottom-[calc(1.5rem+env(safe-area-inset-bottom))] md:bottom-4 left-1/2 -translate-x-1/2 md:left-auto md:right-4 md:translate-x-0 flex flex-col items-center md:items-end gap-2 w-[calc(100%-2rem)] max-w-sm pointer-events-none">
         <AnimatePresence initial={false}>
           {toasts.map((t) => {
             const Icon = ICONS[t.kind];

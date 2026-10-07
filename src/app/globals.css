@@ -92,6 +92,29 @@ body {
   /* iOS: kein Gummiband-Overscroll der ganzen Seite (App-Feeling) */
   overscroll-behavior-y: none;
 }
+/* ── iPhone-Feinschliff ──────────────────────────────────────
+ * Kein grauer Tipp-Blitz (alle Knöpfe haben eigene active:-Zustände), kein
+ * Doppeltipp-Zoom (Pinch-Zoom bleibt erlaubt), kein „Bild sichern“-Menü und kein
+ * Text-Markieren beim langen Drücken auf Karten/Kacheln. */
+html {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+}
+/* touch-action wirkt nur bis zum nächsten Scroll-Container → auf alle Elemente,
+ * aber mit Spezifität 0 (:where), damit Inline-Werte (framer-motion-Drag:
+ * touch-action none, Deck: pan-y) weiter gewinnen. */
+:where(*) {
+  touch-action: manipulation;
+}
+img {
+  -webkit-touch-callout: none;
+  -webkit-user-drag: none;
+}
+button {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 h1, h2, h3 {
   font-family: var(--font-outfit), var(--font-geist-sans), system-ui, sans-serif;
 }
