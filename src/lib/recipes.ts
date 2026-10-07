@@ -379,6 +379,8 @@ export function scanRecipes(): Recipe[] {
 export function getRecipeBySlug(slug: string): Recipe | null {
   const dir = recipesDir();
   if (!dir || !existsSync(dir) || !slug) return null;
+  // Nur reine Dateinamen: kein „../“, keine Unterordner (Next dekodiert %2F im Param)
+  if (/[\\/]/.test(slug) || slug.startsWith(".")) return null;
   const imgDir = imagesDir();
   const target = `${slug}.md`;
   // Schnellweg: exakter Dateiname

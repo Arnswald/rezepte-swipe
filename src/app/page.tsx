@@ -50,6 +50,8 @@ interface Recipe {
   steps: string[];
   tips: string[];
   tags: string[];
+  /** true = aus der schlanken Liste (ohne Zubereitung/Tipps), volles Rezept lädt im Detail nach */
+  lite?: boolean;
 }
 
 // Swipe-Verdikt (Tinder-Logik) — lokal persistiert bis der öffentliche Login kommt
@@ -903,7 +905,12 @@ function RecipeDetail({
             </div>
           )}
 
-          {/* Zubereitung */}
+          {/* Zubereitung (lädt beim Öffnen nach, falls nur die schlanke Liste da ist) */}
+          {r.lite && (
+            <div className="flex items-center gap-2 text-xs text-text-muted py-2">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" /> Zubereitung lädt …
+            </div>
+          )}
           {r.steps.length > 0 && (
             <div>
               <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">
@@ -2135,7 +2142,7 @@ export default function RezeptePage() {
   const [match, setMatch] = useState<{ recipe: Recipe; partners: MatchPing[] } | null>(null);
   const [eveningGroup, setEveningGroup] = useState<{ id: string; name: string } | null>(null);
   const dimTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const deepLinkDone = useRef(false);
+  const [fullRecipes, setFullRecipes] = useState<Record<string, Recipe>>({});
   const pendingGroupDone = useRef(false);
   const verdictsRef = useRef<Record<string, Verdict>>({});
   const filteredRef = useRef<Recipe[]>([]);
@@ -2347,13 +2354,25 @@ export default function RezeptePage() {
   useEffect(() => { countsRef.current = counts; }, [counts]);
 
   useEffect(() => {
-    fetch("/api/recipes", { cache: "no-store" })
+    // Schlanke Liste (ohne Zubereitung/Tipps, ~60 % kleiner) — das volle Rezept
+    // holt das Detail-Sheet beim Öffnen nach.
+    fetch("/api/recipes?lite=1", { cache: "no-store" })
       .then((r) => r.json())
       .then((d) => {
-        setRecipes(d.recipes ?? []);
+        const list: Recipe[] = (d.recipes ?? []).map((r: Recipe) => ({ ...r, steps: r.steps ?? [], tips: r.tips ?? [] }));
+        setRecipes(list);
         setCategories(d.categories ?? []);
         setDiag(d.diagnostics ?? null);
         if (d.error) setError(d.error);
+        // Geteilter Link `/?rezept=slug` → Detail direkt öffnen
+        try {
+          const slug = new URLSearchParams(window.location.search).get("rezept");
+          if (slug) {
+            const r = list.find((x) => x.slug.toLowerCase() === slug.toLowerCase());
+            if (r) setDetail(r);
+            window.history.replaceState(null, "", window.location.pathname);
+          }
+        } catch { /* ignore */ }
       })
       .catch((e) => setError(e instanceof Error ? e.message : "Netzwerkfehler"))
       .finally(() => setLoading(false));
@@ -2408,19 +2427,18 @@ export default function RezeptePage() {
       .catch(() => { /* egal — dann eben ohne Badges */ });
   }, [mode]);
 
-  // Geteilter Link `/?rezept=slug` → Detail direkt öffnen (einmalig, sobald Rezepte da sind).
+  // Volles Rezept (Zubereitung + Tipps) fürs Detail nachladen, einmal pro Gericht.
+  const detailSlug = detail?.slug ?? null;
   useEffect(() => {
-    if (deepLinkDone.current || recipes.length === 0) return;
-    deepLinkDone.current = true;
-    try {
-      const slug = new URLSearchParams(window.location.search).get("rezept");
-      if (slug) {
-        const r = recipes.find((x) => x.slug.toLowerCase() === slug.toLowerCase());
-        if (r) setDetail(r);
-        window.history.replaceState(null, "", window.location.pathname);
-      }
-    } catch { /* ignore */ }
-  }, [recipes]);
+    if (!detailSlug || fullRecipes[detailSlug]) return;
+    let cancelled = false;
+    fetch(`/api/recipes?slug=${encodeURIComponent(detailSlug)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (!cancelled && d?.recipe) setFullRecipes((prev) => ({ ...prev, [detailSlug]: d.recipe })); })
+      .catch(() => { /* offline: Detail zeigt dann eben nur Zutaten */ });
+    return () => { cancelled = true; };
+  }, [detailSlug, fullRecipes]);
+  const detailRecipe = detail ? (fullRecipes[detail.slug] ?? detail) : null;
 
   // Raster-Liste: Kategorie-Filter + Suche + Sortierung nach Beliebtheit.
   // Gerichte mit „nicht gemocht"-Zutaten sinken ans Ende.
@@ -2775,9 +2793,10 @@ export default function RezeptePage() {
 
       {/* Detail-Sheet */}
       <AnimatePresence>
-        {detail && (
+        {detail && detailRecipe && (
           <RecipeDetail
-            r={detail}
+            key={detail.slug}
+            r={detailRecipe}
             onClose={() => setDetail(null)}
             verdict={verdicts[detail.slug]}
             onVerdict={(v) => setDetailVerdict(detail, v)}
