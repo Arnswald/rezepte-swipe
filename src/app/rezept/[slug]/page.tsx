@@ -105,7 +105,7 @@ export default async function RezeptPage({ params }: { params: Promise<{ slug: s
           <div className="absolute inset-x-0 bottom-0 h-2/3 bg-gradient-to-t from-black/85 via-black/30 to-transparent pointer-events-none" />
           <Link
             href="/"
-            className="absolute top-3 left-3 z-10 inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-black/55 backdrop-blur-sm text-white text-xs font-semibold"
+            className="absolute top-[max(0.75rem,env(safe-area-inset-top))] left-3 z-10 inline-flex items-center gap-1 px-3 py-1.5 rounded-full bg-black/55 backdrop-blur-sm text-white text-xs font-semibold"
           >
             <ArrowLeft className="w-3.5 h-3.5" /> App
           </Link>
