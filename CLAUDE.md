@@ -88,8 +88,10 @@ Body-H2-Sektionen: `📋 Überblick` (Tabelle mit Gesamtzeit/Portionen/Schwierig
 `💡 Tipps`. Bild-Auflösung ist **case-insensitiv** (Linux-Container ist
 case-sensitive, macOS/Frontmatter oft nicht).
 
-**Kategorien:** bewusst auf **3** reduziert — `Hauptgericht`, `Frühstück`,
-`Dessert` (Stand 27.07.2026; „Salat" wurde zu Hauptgericht, „Snack" zu Dessert).
+**Kategorien:** Am 27.07.2026 auf 3 reduziert (`Hauptgericht`, `Frühstück`, `Dessert`; „Salat" → Hauptgericht,
+„Snack" → Dessert). Die verbindliche Liste in `00 System/config/Kochbuch-Struktur.md` hat aber 9 Werte, und die
+Rezept-Automation schreibt danach: Stand 08.10.2026 sind 8 im Einsatz (Hauptgericht 63, Dessert 59, Frühstück 31,
+Salat 14, Beilage 11, Sauce 5, Snack 4, Getränk 1). Ob wieder zusammengelegt wird, entscheidet Christian.
 Die App zeigt die Kategorien dynamisch aus den Rezepten — neue Kategorien tauchen
 also automatisch als Filter-Pill auf. Wenn Christian wieder eine Kategorie
 mergen will: `kategorie:`-Frontmatter in `06 Research/Gerichte/*.md` ändern.
