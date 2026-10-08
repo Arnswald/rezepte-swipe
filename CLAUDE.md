@@ -309,10 +309,11 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
 - **Mobile-first**: Swipe-Ansicht muss ohne Seiten-Scroll auf einen iPhone-Screen
   passen — Karte flext (Foto füllt), Buttons sitzen fix unten. Höhe wird über
   `h-[100dvh]` + Flex gesteuert; wenn's mal klemmt, ist es eine Zahl in `page.tsx`.
-- **Deploy-Workflow (WICHTIG): jede Änderung geht direkt live.** Nach jeder
-  Änderung: `npm run build` grün → **direkt auf `main` committen UND pushen**, ohne
-  Rückfrage und ohne Feature-Branch. Christian will nicht extra sagen müssen „mach
-  es live" — der Push IST das Live-Schalten. (Push → CI baut Image → Portainer.)
+- **Deploy-Workflow (WICHTIG): der Push auf `main` IST das Live-Schalten** (Push → CI baut Image → Portainer).
+  Seit 25.08.2026 gilt Christians globale Regel: **committen und pushen nur auf Ansage** (die App ist öffentlich,
+  Freund:innen benutzen sie). Also: Änderung auf einem Branch fertig machen, `npm run lint` + `npm run build` grün,
+  Christian sagen, was sich ändert, nach seinem Okay auf `main` und pushen. (Bis 08.10.2026 stand hier „ohne Rückfrage
+  direkt pushen“, das widersprach der globalen Regel.)
   - **Voraussetzung für echtes Auto-Deploy:** das Repo-Secret `PORTAINER_WEBHOOK_URL`
     muss gesetzt sein (Portainer-Stack → Webhooks → URL → GitHub Secret). Ist es
     **nicht** gesetzt, baut der Push nur das Image — der Container zieht `:latest`
