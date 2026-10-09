@@ -20,6 +20,8 @@ export function AnimatedInput({
   inputMode,
   autoFocus,
   onKeyDown,
+  autoComplete,
+  name,
 }: {
   label: string;
   value: string;
@@ -30,6 +32,8 @@ export function AnimatedInput({
   inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"];
   autoFocus?: boolean;
   onKeyDown?: (e: React.KeyboardEvent<HTMLInputElement>) => void;
+  autoComplete?: string;
+  name?: string;
 }) {
   const id = useId();
   const [focused, setFocused] = useState(false);
@@ -50,6 +54,10 @@ export function AnimatedInput({
         value={value}
         inputMode={inputMode}
         autoFocus={autoFocus}
+        autoComplete={autoComplete}
+        name={name}
+        autoCapitalize={type === "password" || autoComplete === "username" ? "none" : undefined}
+        autoCorrect={autoComplete === "username" ? "off" : undefined}
         onKeyDown={onKeyDown}
         onChange={(e) => onChange(e.target.value)}
         onFocus={() => setFocused(true)}

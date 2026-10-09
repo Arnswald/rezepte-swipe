@@ -315,6 +315,9 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
 - **Bild-Route:** Next liefert `params` schon dekodiert (zweites `decodeURIComponent` → 500 bei „%“); Cache-Key mit Hash, „Käse“/„Köse“ kollidierten.
 - **Test im eingebauten Browser-Bereich:** ist der Bereich ausgeblendet, läuft kein `requestAnimationFrame` → framer-Animationen hängen, Sheets schließen nicht. Kein App-Fehler; Logik per JS prüfen, Optik im Simulator.
 - **Doppelte Rezepte im Vault** (gleicher Link, von Claude anders benannt): `scanRecipes` zeigt je Quelle nur eins (`sourceKey`, IG per Post-ID). Ursache abgestellt in WF10b („Schon im Kochbuch?“ vor dem Scrapen).
+- **Layout seit 09.10.2026 wie Outfits** (`kleiderschrank/app/stil.css`): großer Titel oben, Glas-Leiste unten (`.glas-flaeche`/`.glas-linse` in `globals.css`, Markierung per `layoutId="tab-linse"`). Raster/Profil scrollen über die volle Höhe, Kopf schwebt mit Verlauf darüber (Höhe per ResizeObserver), unten fester Ausblender. Detail kompakt: Instagram + Eckdaten + Zutaten oben, Zubereitung/Tipps/Koch-Verlauf in `Collapsible`, Sheet am Griff wegziehbar (`useDragControls`).
+- **Login-Felder brauchen `autoComplete` und ein `<form>`**, sonst bietet iOS keinen Schlüsselbund an. Safari und Home-Bildschirm-App haben getrennten Speicher, dort muss man sich je einmal anmelden.
+- **Optik-Test headless:** CDP-Skript mit `render-chrome`, 390×844, localStorage `rezepte-guest-name`/`-id` setzen, dann `[aria-label=…]` klicken und `Page.captureScreenshot`.
 - **Offen (Entscheidung Christian):** Die guestId ist das einzige Geheimnis und wird über Matches/Gruppen an andere ausgeliefert. Richtige Lösung: Session-Cookie beim Login, guestId serverseitig ableiten (alle müssen sich einmal neu anmelden).
 
 ## Konventionen

@@ -1,12 +1,12 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { motion, AnimatePresence, useReducedMotion, useMotionValue, useTransform, animate } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion, useMotionValue, useTransform, animate, useDragControls } from "framer-motion";
 import {
   Loader2, ChevronRight, ChevronDown, Clock, Users, Flame,
   X, ExternalLink, AlertCircle, Check,
   Heart, Star, RotateCcw, User, Search, Copy, UserPlus, Sparkles, LogOut,
-  CookingPot, UtensilsCrossed, ChefHat, Soup, Share2, ImagePlus, Mic, Square, Pencil, BookOpen,
+  CookingPot, UtensilsCrossed, ChefHat, Lightbulb, Soup, Share2, ImagePlus, Mic, Square, Pencil, BookOpen,
 } from "lucide-react";
 
 // Instagram-Glyph (aus lucide entfernt) als inline-SVG
@@ -687,6 +687,42 @@ function StarRating({ value, onChange, size = 30 }: { value: number; onChange: (
   );
 }
 
+// Aufklappbarer Abschnitt mit weicher Höhen-Animation (iOS-artig)
+function Collapsible({ title, icon: Icon, children, small = false }: {
+  title: string; icon?: React.ComponentType<{ className?: string }>; children: React.ReactNode; small?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const prefersReduced = useReducedMotion();
+  return (
+    <div className={small ? "" : "bg-surface"}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className={`w-full flex items-center gap-2 text-left active:opacity-60 transition-opacity ${small ? "py-1 text-xs text-text-muted" : "px-3.5 py-3 text-sm font-semibold text-text-primary"}`}
+      >
+        {Icon && <Icon className={small ? "w-3.5 h-3.5" : "w-4 h-4 text-accent"} />}
+        <span className="flex-1">{title}</span>
+        <motion.span animate={{ rotate: open ? 180 : 0 }} transition={{ type: "spring", stiffness: 400, damping: 30 }}>
+          <ChevronDown className="w-4 h-4 text-text-muted" />
+        </motion.span>
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={prefersReduced ? { duration: 0 } : { height: { type: "spring", stiffness: 380, damping: 36 }, opacity: { duration: 0.18 } }}
+            className="overflow-hidden"
+          >
+            <div className={small ? "pb-1" : "px-3.5 pb-3.5"}>{children}</div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 function RecipeDetail({
   r, onClose, verdict, onVerdict, rating = 0, onRate, dislikeHitList = [],
   friends = [], cookEntries = [], onAddCook, onDeleteCook,
@@ -704,6 +740,8 @@ function RecipeDetail({
   const [cookPartner, setCookPartner] = useState("");
   const [cookDate, setCookDate] = useState(todayISO());
   const prefersReduced = useReducedMotion();
+  // Wie ein iOS-Sheet: am Griff oben nach unten ziehen schließt
+  const dragControls = useDragControls();
 
   useEffect(() => {
     document.body.style.overflow = "hidden";
@@ -736,8 +774,22 @@ function RecipeDetail({
         animate={{ y: 0 }}
         exit={{ y: prefersReduced ? 0 : "100%" }}
         transition={prefersReduced ? { duration: 0 } : { type: "spring", damping: 34, stiffness: 300 }}
-        className="relative w-full sm:max-w-lg max-h-[92dvh] overflow-y-auto overscroll-contain bg-surface sm:rounded-2xl rounded-t-2xl border border-border"
+        drag={prefersReduced ? false : "y"}
+        dragListener={false}
+        dragControls={dragControls}
+        dragConstraints={{ top: 0, bottom: 0 }}
+        dragElastic={{ top: 0, bottom: 0.7 }}
+        onDragEnd={(_, info) => { if (info.offset.y > 110 || info.velocity.y > 600) onClose(); }}
+        className="relative w-full sm:max-w-lg max-h-[92dvh] overflow-y-auto overscroll-contain bg-surface sm:rounded-2xl rounded-t-[22px] border border-border"
       >
+        {/* Griff: hier anfassen und nach unten ziehen */}
+        <div
+          onPointerDown={(e) => dragControls.start(e)}
+          className="absolute inset-x-0 top-0 z-30 h-9 flex justify-center pt-2 touch-none cursor-grab"
+          aria-hidden
+        >
+          <span className="w-10 h-[5px] rounded-full bg-white/80 shadow-sm" />
+        </div>
         {/* Schließen-Knopf klebt oben — bei langen Rezepten sonst nur ganz oben/unten erreichbar */}
         <div className="sticky top-0 z-40 h-0">
           <button
@@ -775,137 +827,122 @@ function RecipeDetail({
           )}
         </AnimatePresence>
 
-        <div className="p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] space-y-5">
-          <p className="text-sm text-text-secondary leading-relaxed">{r.description}</p>
+        {/* Kompakt (Christian 09.10.): wer ein Gericht öffnet, will kochen. Oben Video-Link,
+            Eckdaten, Nährwerte, Zutaten. Zubereitung und Tipps stehen im Video, hier nur aufklappbar. */}
+        <div className="p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] space-y-4">
+          {r.description && <p className="text-[13px] text-text-secondary leading-snug line-clamp-2">{r.description}</p>}
 
-          {/* Bewerten + zum Account (funktioniert auch aus „Alle Gerichte") */}
+          {/* Video + Teilen */}
+          <div className="flex gap-2">
+            {r.source && (
+              <a
+                href={r.source}
+                target="_blank"
+                rel="noopener noreferrer"
+                className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold active:scale-[0.97] transition-transform ${isInstagram ? "text-white" : "border border-border text-text-secondary bg-surface-elevated"}`}
+                style={isInstagram ? { background: "linear-gradient(120deg,#f09433,#e6683c 30%,#dc2743 60%,#cc2366 90%)" } : undefined}
+              >
+                {isInstagram ? <><InstagramIcon className="w-4 h-4" /> Video auf Instagram</> : <><ExternalLink className="w-4 h-4" /> Original-Quelle</>}
+              </a>
+            )}
+            <ShareButton
+              slug={r.slug}
+              name={r.name}
+              label=""
+              className={`${r.source ? "w-12" : "flex-1"} shrink-0 flex items-center justify-center rounded-xl bg-surface-elevated border border-border text-text-secondary active:scale-[0.94] transition-transform`}
+            />
+          </div>
+
+          {/* Eckdaten + Nährwerte in einer Zeile */}
+          <div className="flex flex-wrap items-center gap-1.5">
+            {[
+              { icon: Clock, value: r.totalTime },
+              { icon: Users, value: r.portions ? `${r.portions} ${String(r.portions) === "1" ? "Portion" : "Portionen"}` : null },
+              { icon: Flame, value: r.difficulty },
+            ].filter((x) => x.value).map((x, i) => (
+              <span key={i} className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-surface-elevated border border-border text-xs font-medium text-text-secondary">
+                <x.icon className="w-3 h-3 text-text-muted" /> {x.value}
+              </span>
+            ))}
+            <MacroChips r={r} animate />
+          </div>
+
+          {/* Bewerten, kompakt: eine Zeile Urteil + Sterne, Koch-Verlauf aufklappbar */}
           {onVerdict && (
-            <div className="rounded-xl border border-border bg-surface-elevated p-3.5 space-y-3.5">
-              <div>
-                <p className="text-[11px] font-semibold text-text-muted uppercase tracking-wide mb-2">Zu deinem Account</p>
-                <div className="grid grid-cols-3 gap-1.5">
-                  {([["nope", X, "Nö"], ["like", Heart, "Lecker"], ["super", Star, "Superlike"]] as const).map(([v, Icon, label]) => {
-                    const active = verdict === v;
-                    const color = v === "nope" ? "#bd5138" : v === "like" ? "#4f9a58" : "#d99a2b";
-                    return (
-                      <button
-                        key={v}
-                        onClick={() => onVerdict(v)}
-                        className={`flex flex-col items-center gap-1 py-2.5 rounded-lg text-xs font-semibold border transition-colors ${
-                          active ? "text-white border-transparent" : "text-text-secondary border-border bg-surface"
-                        }`}
-                        style={active ? { background: color } : undefined}
-                      >
-                        <Icon className="w-4 h-4" /> {label}
-                      </button>
-                    );
-                  })}
-                </div>
+            <div className="space-y-2">
+              <div className="flex items-center gap-1.5">
+                {([["nope", X, "Nö"], ["like", Heart, "Lecker"], ["super", Star, "Super"]] as const).map(([v, Icon, label]) => {
+                  const active = verdict === v;
+                  const color = v === "nope" ? "#bd5138" : v === "like" ? "#4f9a58" : "#d99a2b";
+                  return (
+                    <motion.button
+                      key={v}
+                      whileTap={{ scale: 0.92 }}
+                      onClick={() => onVerdict(v)}
+                      aria-pressed={active}
+                      className={`flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-semibold border transition-colors ${active ? "text-white border-transparent" : "text-text-secondary border-border bg-surface"}`}
+                      style={active ? { background: color } : undefined}
+                    >
+                      <Icon className="w-3.5 h-3.5" /> {label}
+                    </motion.button>
+                  );
+                })}
+                {onRate && <div className="ml-auto"><StarRating value={rating} onChange={onRate} size={18} /></div>}
               </div>
-              {onRate && (
-                <div className="pt-3 border-t border-border/70">
-                  <p className="text-[11px] font-semibold text-text-muted uppercase tracking-wide mb-2">Bereits gekocht?</p>
-                  {/* Verlauf */}
-                  {cookEntries.length > 0 && (
-                    <div className="space-y-1.5 mb-2">
-                      {cookEntries.map((e) => (
-                        <div key={e.id} className="flex items-center gap-2 text-xs">
-                          <CookingPot className="w-3.5 h-3.5 text-accent shrink-0" />
-                          <span className="text-text-secondary">
-                            {fmtDay(e.cookedOn)}{e.withName ? ` · mit ${e.withName}` : " · alleine"}
-                          </span>
-                          {e.isAuthor && onDeleteCook && (
-                            <button onClick={() => onDeleteCook(e.id)} aria-label="Eintrag entfernen"
-                              className="ml-auto text-text-muted active:scale-90 transition-transform">
-                              <X className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {/* Neuer Eintrag: mit wem + Datum + Eintragen */}
-                  {onAddCook && (
-                    <div className="flex items-center gap-1.5">
-                      <div className="relative shrink-0">
-                        <select
-                          value={cookPartner}
-                          onChange={(e) => setCookPartner(e.target.value)}
-                          className="appearance-none min-w-[92px] text-xs bg-surface border border-border rounded-lg pl-2.5 pr-7 py-1.5 text-text-secondary"
-                        >
-                          <option value="">Alleine</option>
-                          {friends.map((f) => (
-                            <option key={f.guestId} value={f.guestId}>mit {f.name}</option>
-                          ))}
-                        </select>
-                        <ChevronDown className="w-3.5 h-3.5 text-text-muted absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
-                      </div>
-                      <input
-                        type="date"
-                        value={cookDate}
-                        max={todayISO()}
-                        onChange={(e) => setCookDate(e.target.value)}
-                        className="flex-1 min-w-0 text-xs bg-surface border border-border rounded-lg px-2 py-1.5 text-text-secondary"
-                      />
-                      <button
-                        onClick={() => onAddCook(cookPartner || null, cookDate || todayISO())}
-                        className="shrink-0 text-xs font-semibold text-white bg-accent px-3 py-1.5 rounded-lg active:scale-95 transition-transform"
-                      >
-                        Eintragen
-                      </button>
-                    </div>
-                  )}
-                  {/* Bewertung (Sterne) */}
-                  <div className="flex items-center gap-2 mt-3">
-                    <span className="text-[11px] text-text-muted shrink-0">Bewertung</span>
-                    <StarRating value={rating} onChange={onRate} size={24} />
-                  </div>
-                </div>
-              )}
               {dislikeHitList.length > 0 && (
                 <p className="text-[11px] text-[#bd5138] flex items-start gap-1.5">
                   <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-px" />
-                  Enthält {dislikeHitList.join(", ")} — magst du laut deinem Account nicht.
+                  Enthält {dislikeHitList.join(", ")}, magst du laut deinem Account nicht.
                 </p>
+              )}
+              {onAddCook && (
+                <Collapsible
+                  title={cookEntries.length ? `Gekocht · zuletzt ${fmtDay(cookEntries[0].cookedOn)}` : "Gekocht? Eintragen"}
+                  icon={CookingPot}
+                  small
+                >
+                  <div className="space-y-2 pt-1">
+                    {cookEntries.map((e) => (
+                      <div key={e.id} className="flex items-center gap-2 text-xs">
+                        <span className="text-text-secondary">{fmtDay(e.cookedOn)}{e.withName ? ` · mit ${e.withName}` : " · alleine"}</span>
+                        {e.isAuthor && onDeleteCook && (
+                          <button onClick={() => onDeleteCook(e.id)} aria-label="Eintrag entfernen" className="ml-auto text-text-muted active:scale-90 transition-transform">
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                    <div className="flex items-center gap-1.5">
+                      <div className="relative shrink-0">
+                        <select value={cookPartner} onChange={(e) => setCookPartner(e.target.value)}
+                          className="appearance-none min-w-[92px] text-xs bg-surface border border-border rounded-lg pl-2.5 pr-7 py-1.5 text-text-secondary">
+                          <option value="">Alleine</option>
+                          {friends.map((f) => <option key={f.guestId} value={f.guestId}>mit {f.name}</option>)}
+                        </select>
+                        <ChevronDown className="w-3.5 h-3.5 text-text-muted absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      </div>
+                      <input type="date" value={cookDate} max={todayISO()} onChange={(e) => setCookDate(e.target.value)}
+                        className="flex-1 min-w-0 text-xs bg-surface border border-border rounded-lg px-2 py-1.5 text-text-secondary" />
+                      <button onClick={() => onAddCook(cookPartner || null, cookDate || todayISO())}
+                        className="shrink-0 text-xs font-semibold text-white bg-accent px-3 py-1.5 rounded-lg active:scale-95 transition-transform">
+                        Eintragen
+                      </button>
+                    </div>
+                  </div>
+                </Collapsible>
               )}
             </div>
           )}
 
-          {/* Überblick */}
-          <div className="grid grid-cols-3 gap-2">
-            {[
-              { icon: Clock, label: "Zeit", value: r.totalTime },
-              { icon: Users, label: "Portionen", value: r.portions },
-              { icon: Flame, label: "Level", value: r.difficulty },
-            ].filter((x) => x.value).map((x) => (
-              <div key={x.label} className="bg-surface-elevated border border-border rounded-xl px-2.5 py-2">
-                <div className="flex items-center gap-1 text-[10px] text-text-muted uppercase tracking-wide">
-                  <x.icon className="w-3 h-3" /> {x.label}
-                </div>
-                <p className="text-sm font-semibold text-text-primary mt-0.5">{x.value}</p>
-              </div>
-            ))}
-          </div>
-
-          {/* Makros */}
-          <div>
-            <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">Nährwerte</h3>
-            <MacroChips r={r} animate />
-          </div>
-
           {/* Zutaten mit Abhak-Funktion */}
           {r.ingredients.length > 0 && (
             <div>
-              <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">
-                🛒 Zutaten
-              </h3>
-              <div className="space-y-3">
+              <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-1">Zutaten</h3>
+              <div className="space-y-2">
                 {r.ingredients.map((g, gi) => (
                   <div key={gi}>
-                    {g.group && (
-                      <p className="text-[11px] font-semibold text-text-secondary mb-1">{g.group}</p>
-                    )}
-                    <div className="space-y-1">
+                    {g.group && <p className="text-[11px] font-semibold text-text-secondary mt-1">{g.group}</p>}
+                    <div>
                       {g.items.map((item, ii) => {
                         const key = `${gi}-${ii}`;
                         const isChecked = checked.has(key);
@@ -913,20 +950,16 @@ function RecipeDetail({
                           <button
                             key={key}
                             onClick={() => toggle(key)}
-                            className="w-full flex items-start gap-2.5 py-2 px-2 rounded-lg text-left active:bg-surface-elevated transition-colors"
+                            className="w-full flex items-start gap-2.5 py-1.5 px-1 rounded-lg text-left active:bg-surface-elevated transition-colors"
                           >
-                            <span
-                              className={`shrink-0 mt-0.5 w-4 h-4 rounded border flex items-center justify-center text-[10px] ${
-                                isChecked
-                                  ? "bg-accent border-accent text-white"
-                                  : "border-border text-transparent"
-                              }`}
+                            <motion.span
+                              animate={{ scale: isChecked ? [1, 1.25, 1] : 1 }}
+                              transition={{ duration: 0.25 }}
+                              className={`shrink-0 mt-0.5 w-4 h-4 rounded-full border flex items-center justify-center text-[10px] transition-colors ${isChecked ? "bg-accent border-accent text-white" : "border-border text-transparent"}`}
                             >
                               ✓
-                            </span>
-                            <span className={`text-sm ${isChecked ? "text-text-muted line-through" : "text-text-secondary"}`}>
-                              {item}
-                            </span>
+                            </motion.span>
+                            <span className={`text-sm transition-colors ${isChecked ? "text-text-muted line-through" : "text-text-primary"}`}>{item}</span>
                           </button>
                         );
                       })}
@@ -937,77 +970,37 @@ function RecipeDetail({
             </div>
           )}
 
-          {/* Zubereitung (lädt beim Öffnen nach, falls nur die schlanke Liste da ist) */}
+          {/* Zubereitung + Tipps: zugeklappt */}
           {r.lite && (
-            <div className="flex items-center gap-2 text-xs text-text-muted py-2">
+            <div className="flex items-center gap-2 text-xs text-text-muted">
               <Loader2 className="w-3.5 h-3.5 animate-spin" /> Zubereitung lädt …
             </div>
           )}
-          {r.steps.length > 0 && (
-            <div>
-              <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">
-                👨‍🍳 Zubereitung
-              </h3>
-              <ol className="space-y-2.5">
-                {r.steps.map((s, i) => (
-                  <li key={i} className="flex gap-3">
-                    <span className="shrink-0 w-6 h-6 rounded-full bg-accent/15 text-accent text-xs font-bold flex items-center justify-center">
-                      {i + 1}
-                    </span>
-                    <p className="text-sm text-text-secondary leading-relaxed">{s}</p>
-                  </li>
-                ))}
-              </ol>
+          {(r.steps.length > 0 || r.tips.length > 0) && (
+            <div className="rounded-xl border border-border divide-y divide-border overflow-hidden">
+              {r.steps.length > 0 && (
+                <Collapsible title={`Zubereitung · ${r.steps.length} Schritte`} icon={ChefHat}>
+                  <ol className="space-y-2 pt-1">
+                    {r.steps.map((st, i) => (
+                      <li key={i} className="flex gap-2.5">
+                        <span className="shrink-0 w-5 h-5 rounded-full bg-accent/15 text-accent text-[11px] font-bold flex items-center justify-center mt-px">{i + 1}</span>
+                        <p className="text-[13px] text-text-secondary leading-snug">{st}</p>
+                      </li>
+                    ))}
+                  </ol>
+                </Collapsible>
+              )}
+              {r.tips.length > 0 && (
+                <Collapsible title={`Tipps · ${r.tips.length}`} icon={Lightbulb}>
+                  <ul className="space-y-1.5 pt-1">
+                    {r.tips.map((t, i) => (
+                      <li key={i} className="text-xs text-text-muted leading-snug flex gap-2"><span className="text-accent">·</span>{t}</li>
+                    ))}
+                  </ul>
+                </Collapsible>
+              )}
             </div>
           )}
-
-          {/* Tipps */}
-          {r.tips.length > 0 && (
-            <div>
-              <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-2">
-                💡 Tipps
-              </h3>
-              <ul className="space-y-1.5">
-                {r.tips.map((t, i) => (
-                  <li key={i} className="text-xs text-text-muted leading-relaxed flex gap-2">
-                    <span className="text-accent">·</span>{t}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {r.source && (
-            isInstagram ? (
-              <a
-                href={r.source}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center justify-center gap-2 w-full py-3 rounded-xl text-white text-sm font-semibold active:scale-[0.98] transition-transform"
-                style={{ background: "linear-gradient(120deg,#f09433,#e6683c 30%,#dc2743 60%,#cc2366 90%)" }}
-              >
-                <InstagramIcon className="w-4 h-4" /> Auf Instagram ansehen
-              </a>
-            ) : (
-              <a
-                href={r.source}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center justify-center gap-2 w-full py-2.5 rounded-xl border border-border text-text-muted text-xs active:scale-[0.98] transition-transform"
-              >
-                <ExternalLink className="w-3.5 h-3.5" /> Original-Quelle
-              </a>
-            )
-          )}
-
-          <ShareButton slug={r.slug} name={r.name} />
-
-          <button
-            onClick={onClose}
-            className="w-full py-3 rounded-xl bg-surface-elevated border border-border text-text-secondary text-sm font-medium"
-          >
-            Schließen
-          </button>
         </div>
       </motion.div>
     </div>
@@ -1424,11 +1417,15 @@ function AuthGate({ onDone }: { onDone: (name: string, id: string, verdicts?: Re
             : "Willkommen zurück! Melde dich an."}
         </p>
 
-        <div className="bg-surface border border-border rounded-3xl p-5 shadow-[0_10px_30px_rgba(70,50,30,0.10)] space-y-3">
+        <form
+          onSubmit={(e) => { e.preventDefault(); submit(); }}
+          className="bg-surface border border-border rounded-3xl p-5 shadow-[0_10px_30px_rgba(70,50,30,0.10)] space-y-3"
+        >
           <div className="flex items-center rounded-full bg-surface-elevated p-1 border border-border">
             {([["register", "Registrieren"], ["login", "Einloggen"]] as const).map(([m, label]) => (
               <button
                 key={m}
+                type="button"
                 onClick={() => { setMode(m); setErr(null); }}
                 className={`flex-1 py-1.5 rounded-full text-xs font-semibold transition-colors ${mode === m ? "bg-surface text-text-primary shadow-sm" : "text-text-muted"}`}
               >
@@ -1437,15 +1434,16 @@ function AuthGate({ onDone }: { onDone: (name: string, id: string, verdicts?: Re
             ))}
           </div>
 
-          <AnimatedInput label="Benutzername" value={username} onChange={setUsername} autoFocus
-            onKeyDown={(e) => { if (e.key === "Enter") submit(); }} />
-          <AnimatedInput label="Passwort" value={password} onChange={setPassword} type="password"
-            onKeyDown={(e) => { if (e.key === "Enter") submit(); }} />
+          {/* autoComplete + echtes <form>: erst dann bietet das iPhone an, Name und Passwort im
+              Schlüsselbund zu sichern, und füllt sie beim nächsten Mal per Face ID ein
+              (Safari und Home-Bildschirm-App haben getrennten Speicher → zweites Login). */}
+          <AnimatedInput label="Benutzername" name="username" autoComplete="username" value={username} onChange={setUsername} autoFocus />
+          <AnimatedInput label="Passwort" name="password" autoComplete={isRegister ? "new-password" : "current-password"} value={password} onChange={setPassword} type="password" />
 
           {err && <p className="text-xs text-[#bd5138] text-left">{err}</p>}
 
           <button
-            onClick={submit}
+            type="submit"
             disabled={busy || !username.trim() || !password}
             className="w-full py-3 rounded-xl bg-accent text-white text-sm font-semibold active:scale-[0.98] transition-transform disabled:opacity-50 flex items-center justify-center gap-1.5"
           >
@@ -1453,7 +1451,7 @@ function AuthGate({ onDone }: { onDone: (name: string, id: string, verdicts?: Re
             {isRegister ? "Los geht's" : "Einloggen"}
             {!busy && <ChevronRight className="w-4 h-4" />}
           </button>
-        </div>
+        </form>
 
         <p className="text-[11px] text-text-muted mt-4">
           {isRegister
@@ -2605,6 +2603,21 @@ export default function RezeptePage() {
     ? (eveningRecipes.length > 0 && index < eveningRecipes.length)
     : (deckList.length > 0 && index < deckList.length));
 
+  // Raster und Profil teilen sich den Scroll-Container → beim Bereichswechsel oben anfangen
+  const contentRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { contentRef.current?.scrollTo({ top: 0 }); }, [mode]);
+
+  // Höhe des schwebenden Kopfs messen (mit/ohne Kategorien), damit der Inhalt darunter beginnt
+  const headerRef = useRef<HTMLDivElement>(null);
+  const [headerH, setHeaderH] = useState(0);
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setHeaderH(el.offsetHeight));
+    ro.observe(el);
+    return () => ro.disconnect();
+  });
+
   // Vor allem anderen: Name abfragen (nach dem Lesen aus localStorage, um Flackern zu vermeiden)
   if (!hydrated) return <div className="h-[100dvh]" />;
   if (!guestName) return (
@@ -2614,37 +2627,30 @@ export default function RezeptePage() {
     }} />
   );
 
+  // Raster und Profil scrollen über die volle Höhe: oben läuft der Inhalt hinter die
+  // Navigation und blendet aus, unten blendet er vor der Kante aus (statt harter Schnitt).
+  // Der Stapel (Entdecken) bleibt im festen Layout.
+  const scrollMode = !showDeck;
+
   return (
-    <div className="mx-auto w-full max-w-3xl h-[100dvh] flex flex-col px-4 pt-[max(env(safe-area-inset-top),0.75rem)] pb-[max(env(safe-area-inset-bottom),1.75rem)]">
-      {/* Header — zentrierter 3-Tab-Switcher (aktiver Tab zeigt Label). Logo dient nur als Favicon. */}
-      <div className="flex justify-center shrink-0">
-        <div className="flex items-center rounded-full bg-surface-elevated p-1 gap-0.5 border border-border">
-          {([
-            ["swipe", Sparkles, "Entdecken"],
-            ["grid", BookOpen, "Alle Gerichte"],
-            ["account", User, "Profil"],
-          ] as const).map(([m, Icon, label]) => {
-            const active = mode === m;
-            return (
-              <button
-                key={m}
-                onClick={() => setMode(m)}
-                aria-label={label}
-                className={`flex items-center gap-2 py-2 rounded-full transition-all ${
-                  active ? "bg-surface text-text-primary shadow-sm px-4" : "text-text-muted px-3.5"
-                }`}
-              >
-                <Icon className="w-[18px] h-[18px] shrink-0" />
-                {active && <span className="text-sm font-semibold leading-none">{label}</span>}
-              </button>
-            );
-          })}
-        </div>
+    <div className={`relative mx-auto w-full max-w-3xl h-[100dvh] flex flex-col px-4 ${scrollMode ? "" : "pb-[calc(env(safe-area-inset-bottom)+14px+64px+14px)]"}`}>
+      <div
+        ref={headerRef}
+        className={scrollMode
+          ? "absolute inset-x-0 top-0 z-30 px-4 pb-7 pt-[calc(env(safe-area-inset-top)+0.75rem)] pointer-events-none [&>*]:pointer-events-auto"
+          : "shrink-0 pt-[calc(env(safe-area-inset-top)+0.75rem)]"}
+        style={scrollMode ? { background: "linear-gradient(to bottom, var(--bg) 0%, var(--bg) calc(100% - 1.75rem), color-mix(in srgb, var(--bg) 0%, transparent) 100%)" } : undefined}
+      >
+      {/* Großer Titel wie in Outfits; die Bereiche wechselt die Glas-Leiste unten */}
+      <div className="flex items-end justify-between gap-3 pt-1 pb-1">
+        <h1 className="text-[26px] font-extrabold tracking-tight leading-[1.1] text-text-primary">
+          {mode === "swipe" ? (eveningGroup ? "Heute Abend" : "Entdecken") : mode === "grid" ? "Alle Gerichte" : "Profil"}
+        </h1>
       </div>
 
       {/* Kategorie-Filter — dezent, eine Reihe (nicht im Account, nicht im Abend-Modus) */}
       {mode !== "account" && !eveningGroup && categories.length > 0 && (
-        <div className="flex flex-nowrap items-center gap-1.5 shrink-0 mt-4 overflow-x-auto scrollbar-none -mx-4 px-4">
+        <div className="flex flex-nowrap items-center gap-1.5 shrink-0 mt-3 overflow-x-auto scrollbar-none -mx-4 px-4">
           {["Alle", ...orderCategories(categories)].map((cat) => {
             const active = activeCat === cat;
             return (
@@ -2670,11 +2676,14 @@ export default function RezeptePage() {
           })}
         </div>
       )}
+      </div>
 
       {/* Inhalt */}
       <div
+        ref={contentRef}
         onScroll={mode === "grid" ? onGridScroll : undefined}
-        className={showDeck ? "flex-1 min-h-0 flex flex-col mt-4" : "flex-1 min-h-0 overflow-y-auto overflow-x-hidden mt-4"}
+        className={showDeck ? "flex-1 min-h-0 flex flex-col mt-4" : "flex-1 min-h-0 overflow-y-auto overflow-x-hidden -mx-4 px-4 pb-[calc(env(safe-area-inset-bottom)+14px+64px+2rem)]"}
+        style={scrollMode ? { paddingTop: Math.max(headerH - 12, 0) } : undefined}
       >
         {loading ? (
           <div className="flex justify-center py-20">
@@ -2834,9 +2843,54 @@ export default function RezeptePage() {
         )}
       </div>
 
+      {/* Glas-Leiste unten wie in Outfits (Liquid Glass, elastische Markierung) */}
+      <nav aria-label="Bereiche" className="fixed z-50 left-4 right-4 mx-auto max-w-md bottom-[calc(env(safe-area-inset-bottom)+14px)] h-16 rounded-full select-none">
+        <div aria-hidden className="glas-flaeche absolute inset-0 rounded-full" />
+        <div role="radiogroup" className="relative flex h-full p-1.5">
+          {([
+            ["swipe", Sparkles, "Entdecken"],
+            ["grid", BookOpen, "Gerichte"],
+            ["account", User, "Profil"],
+          ] as const).map(([m, Icon, label]) => {
+            const active = mode === m;
+            return (
+              <motion.button
+                key={m}
+                role="radio"
+                aria-checked={active}
+                aria-label={label}
+                whileTap={{ scale: 0.9 }}
+                transition={{ type: "spring", stiffness: 600, damping: 30 }}
+                onClick={() => setMode(m)}
+                className={`relative flex-1 flex flex-col items-center justify-center gap-0.5 rounded-full transition-colors duration-200 ${active ? "text-accent" : "text-text-muted"}`}
+              >
+                {active && (
+                  <motion.span
+                    layoutId="tab-linse"
+                    className="glas-linse absolute inset-0 rounded-full"
+                    transition={{ type: "spring", stiffness: 520, damping: 34, mass: 0.8 }}
+                  />
+                )}
+                <Icon className="relative w-[22px] h-[22px]" />
+                <span className={`relative text-[10.5px] leading-none ${active ? "font-semibold" : "font-medium"}`}>{label}</span>
+              </motion.button>
+            );
+          })}
+        </div>
+      </nav>
+
+      {/* Weicher Ausblender an der Unterkante (Raster, Profil) */}
+      {scrollMode && (
+        <div
+          aria-hidden
+          className="pointer-events-none fixed inset-x-0 bottom-0 z-20 h-[calc(env(safe-area-inset-bottom)+7rem)]"
+          style={{ background: "linear-gradient(to top, var(--bg) 0%, var(--bg) 25%, color-mix(in srgb, var(--bg) 0%, transparent) 100%)" }}
+        />
+      )}
+
       {/* Schwebende Suche — nur im Raster, fadet beim Scrollen */}
       {mode === "grid" && recipes.length > 0 && (
-        <div className={`fixed left-1/2 -translate-x-1/2 bottom-[max(env(safe-area-inset-bottom),1rem)] z-40 w-[min(92%,28rem)] transition-opacity duration-300 ${searchDimmed ? "opacity-40" : "opacity-100"}`}>
+        <div className={`fixed left-1/2 -translate-x-1/2 bottom-[calc(env(safe-area-inset-bottom)+14px+64px+10px)] z-40 w-[min(92%,28rem)] transition-opacity duration-300 ${searchDimmed ? "opacity-40" : "opacity-100"}`}>
           <div className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-surface/90 backdrop-blur-md border border-border shadow-lg">
             <Search className="w-4 h-4 text-text-muted shrink-0" />
             <input
