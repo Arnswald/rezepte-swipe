@@ -270,6 +270,7 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
 | `src/components/ShareButton.tsx` | Teilen via `navigator.share`, Fallback Link-Copy |
 | `src/lib/recipes.ts` | Rezept-Parser (+ `getRecipeBySlug`) + `deriveTags` (Zutaten-Tags fürs Empfehlungs-Scoring) |
 | `src/lib/db.ts` | better-sqlite3: `verdicts` + `guests`/`connections` + `groups`/`group_members` + `ratings` (Sterne) + `preferences` (Abneigungen) + `cook_events` (Koch-Verlauf, Autor+Partner+Datum), Codes/Matches/Trending/Gruppen-Ranking |
+| `src/lib/guard.ts` | Bremse gegen Durchprobieren (Fehlversuche je IP: Login 10/15 Min, Admin-PIN 5/30 Min, Freundes-/Gruppencode 15/15 Min) + `checkAdminPin` (zeitkonstant) für alle Admin-Routen |
 | `src/lib/env.ts` | Env-Zugriff (RECIPES-Pfade, DATA_DIR, ADMIN_PIN, SITE_URL, Webhook) |
 | `src/app/api/auth/register/route.ts` | POST: Account anlegen (Benutzername+Passwort, übernimmt guestId) |
 | `src/app/api/auth/login/route.ts` | POST: Login → Identität + Server-Bewertungen |
@@ -304,6 +305,16 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
 - **`touch-action` wirkt nur bis zum nächsten Scroll-Container** → `:where(*) { touch-action: manipulation }` in `globals.css`; framer-motion setzt am Drag-Element inline `none` und gewinnt.
 - **Tipps im Vault** stehen als `**Titel:** Text` (Doppelpunkt in den Sternchen) → Parser darf keinen zweiten anhängen.
 - **Headless-Test:** `next start` (Produktionsbuild) statt `next dev`, Chrome nur über `~/.local/bin/render-chrome --headless=new`. Messskripte der Durchsicht: CDP mit 390×844, Touch, 4G, CPU 4×.
+
+## Fallen (Bug-Runde 09.10.2026)
+
+- **Wisch-Knöpfe ohne Sperre:** zweiter Tipp in den 0,32 s Abflug traf dieselbe Karte und überschrieb das Urteil → `flying`-Ref in `SwipeDeck.commit`.
+- **/api/me ersetzte den lokalen Stand** → fehlgeschlagene Swipes landen in `rezepte-pending-v1` und werden beim Öffnen nachgeschickt; Swipes dieser Sitzung (`touchedRef`) überleben die ältere Server-Antwort.
+- **Undo** speichert je Swipe das vorherige Urteil (`history: {slug, prev}`), sonst löschte Undo nach „Nochmal von vorn" den Favoriten.
+- **Abend-Modus teilt `index`/`history`** mit dem Entdecken-Stapel → Position in `savedDeckPos` merken und beim Verlassen zurückholen.
+- **Bild-Route:** Next liefert `params` schon dekodiert (zweites `decodeURIComponent` → 500 bei „%“); Cache-Key mit Hash, „Käse“/„Köse“ kollidierten.
+- **Test im eingebauten Browser-Bereich:** ist der Bereich ausgeblendet, läuft kein `requestAnimationFrame` → framer-Animationen hängen, Sheets schließen nicht. Kein App-Fehler; Logik per JS prüfen, Optik im Simulator.
+- **Offen (Entscheidung Christian):** Die guestId ist das einzige Geheimnis und wird über Matches/Gruppen an andere ausgeliefert. Richtige Lösung: Session-Cookie beim Login, guestId serverseitig ableiten (alle müssen sich einmal neu anmelden).
 
 ## Konventionen
 

@@ -10,6 +10,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { blocked, fail, LIMITS } from "@/lib/guard";
 import {
   ensureGuest, getGroupsForGuest, createGroup, joinGroupByCode, leaveGroup,
   setEveningPick, resetEvening, getEveningPlan, type Verdict,
@@ -47,7 +48,10 @@ export async function POST(req: Request) {
     if (action === "join") {
       const code = (b.code ?? "").trim().slice(0, 40);
       if (!code) return NextResponse.json({ error: "Gib einen Gruppencode ein." }, { status: 400 });
+      const stop = blocked(req, LIMITS.code);
+      if (stop) return stop;
       const res = joinGroupByCode(guestId, code, now);
+      if (!res.ok) fail(req, LIMITS.code);
       if (!res.ok) return NextResponse.json({ error: "Diese Gruppe gibt es nicht. Tippfehler?" }, { status: 404 });
       return NextResponse.json({ ok: true, group: { id: res.group.group_id, name: res.group.name, code: res.group.group_code }, already: res.already });
     }

@@ -7,18 +7,13 @@
 
 import { NextResponse } from "next/server";
 import { getAllVerdicts, type Verdict } from "@/lib/db";
-import { env } from "@/lib/env";
+import { checkAdminPin } from "@/lib/guard";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
-  if (!env.ADMIN_PIN) {
-    return NextResponse.json({ error: "Admin nicht konfiguriert (ADMIN_PIN fehlt)" }, { status: 503 });
-  }
-  const pin = req.headers.get("x-admin-pin") ?? "";
-  if (pin !== env.ADMIN_PIN) {
-    return NextResponse.json({ error: "Falscher PIN" }, { status: 401 });
-  }
+  const bad = checkAdminPin(req);
+  if (bad) return bad;
 
   const rows = getAllVerdicts();
 

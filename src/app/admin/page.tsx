@@ -72,6 +72,8 @@ export default function AdminPage() {
         if (gRes.ok) setGroups(((await gRes.json()).groups ?? []) as AdminGroup[]);
       } else if (res.status === 401) {
         setError("Falscher PIN."); setAuthed(false); sessionStorage.removeItem(PIN_KEY);
+      } else if (res.status === 429) {
+        setError(((await res.json().catch(() => ({}))) as { error?: string }).error ?? "Zu viele Versuche."); setAuthed(false);
       } else if (res.status === 503) {
         setError("Admin ist noch nicht konfiguriert — ADMIN_PIN in Portainer setzen.");
       } else {

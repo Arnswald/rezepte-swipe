@@ -8,20 +8,12 @@
 
 import { NextResponse } from "next/server";
 import { getAdminPersons, deleteGuestCascade } from "@/lib/db";
-import { env } from "@/lib/env";
+import { checkAdminPin } from "@/lib/guard";
 
 export const dynamic = "force-dynamic";
 
 /** Prüft den Admin-PIN. Gibt eine Fehlerantwort zurück, oder null wenn ok. */
-function checkPin(req: Request): NextResponse | null {
-  if (!env.ADMIN_PIN) {
-    return NextResponse.json({ error: "Admin nicht konfiguriert (ADMIN_PIN fehlt)" }, { status: 503 });
-  }
-  if ((req.headers.get("x-admin-pin") ?? "") !== env.ADMIN_PIN) {
-    return NextResponse.json({ error: "Falscher PIN" }, { status: 401 });
-  }
-  return null;
-}
+const checkPin = checkAdminPin;
 
 export async function GET(req: Request) {
   const bad = checkPin(req);

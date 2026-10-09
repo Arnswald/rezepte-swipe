@@ -7,6 +7,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { blocked, fail, LIMITS } from "@/lib/guard";
 import { ensureGuest, connectByCode } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -26,8 +27,11 @@ export async function POST(req: Request) {
     const now = new Date().toISOString();
     ensureGuest(guestId, name, now); // sicherstellen, dass ich selbst existiere
 
+    const stop = blocked(req, LIMITS.code);
+    if (stop) return stop;
     const res = connectByCode(guestId, code, now);
     if (!res.ok) {
+      if (res.reason !== "self") fail(req, LIMITS.code);
       const msg = res.reason === "self"
         ? "Das ist dein eigener Code 🙂"
         : "Diesen Code gibt es nicht. Tippfehler?";

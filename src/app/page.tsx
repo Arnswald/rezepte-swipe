@@ -149,11 +149,25 @@ interface CookEvent {
 interface Friend { guestId: string; name: string }
 
 // Verdict ans Backend schicken. Gibt die Antwort zurück (u.a. frische Matches);
-// bleibt aber unkritisch — die UI hängt nicht davon ab.
-async function postVerdict(body: {
+// bleibt aber unkritisch — die UI hängt nicht davon ab. Schlägt das Senden fehl
+// (offline, 500), merkt sich die App den Swipe und schickt ihn beim nächsten Öffnen
+// nach. Sonst überschrieb /api/me ihn dort still mit dem alten Server-Stand.
+type VerdictBody = {
   guestId: string; name: string; slug: string;
   recipeName?: string; category?: string; verdict: Verdict | null;
-}): Promise<{ ok?: boolean; matches?: MatchPing[] } | null> {
+};
+const PENDING_KEY = "rezepte-pending-v1";
+function loadPending(): Record<string, VerdictBody> {
+  try { const v = JSON.parse(localStorage.getItem(PENDING_KEY) || "{}"); return v && typeof v === "object" ? v : {}; } catch { return {}; }
+}
+function setPending(slug: string, body: VerdictBody | null) {
+  try {
+    const p = loadPending();
+    if (body) p[slug] = body; else delete p[slug];
+    localStorage.setItem(PENDING_KEY, JSON.stringify(p));
+  } catch { /* ignore */ }
+}
+async function postVerdict(body: VerdictBody): Promise<{ ok?: boolean; matches?: MatchPing[] } | null> {
   try {
     const res = await fetch("/api/verdict", {
       method: "POST",
@@ -161,10 +175,18 @@ async function postVerdict(body: {
       body: JSON.stringify(body),
       keepalive: true,
     });
+    if (!res.ok) throw new Error(String(res.status));
+    setPending(body.slug, null);
     return await res.json();
   } catch {
-    return null; // offline egal — localStorage bleibt Quelle der Wahrheit für die UI
+    setPending(body.slug, body);
+    return null;
   }
+}
+// Liegengebliebene Swipes nachschicken (nur die des aktuellen Accounts).
+async function flushPending(guestId: string) {
+  const all = Object.values(loadPending());
+  await Promise.all(all.filter((b) => b.guestId === guestId).map((b) => postVerdict(b)));
 }
 
 interface Diagnostics {
@@ -350,15 +372,20 @@ function SwipeDeck({
   const superOp = useTransform(y, [-120, -30], [1, 0]);
 
   const current = recipes[index];
+  // Sperre während der Abflug-Animation: ein zweiter Tipp in den 0,32 s traf sonst
+  // dieselbe Karte noch einmal und überschrieb das erste Urteil.
+  const flying = useRef(false);
 
   const commit = useCallback((v: Verdict) => {
-    if (!current) return;
+    if (!current || flying.current) return;
+    flying.current = true;
     const tx = v === "like" ? 560 : v === "nope" ? -560 : 0;
     const ty = v === "super" ? -720 : 60;
     const finish = () => {
       onVerdict(current, v);
       x.set(0); y.set(0);
       setIndex(index + 1);
+      flying.current = false;
     };
     if (prefersReduced) { finish(); return; }
     animate(x, tx, { duration: 0.32, ease: [0.35, 0.6, 0.3, 1] });
@@ -372,6 +399,11 @@ function SwipeDeck({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // Nicht wischen, während man in einem Feld tippt oder ein Sheet offen ist
+      // (Datum, „mit wem“, Scrollen im Rezept trafen sonst die Karte dahinter).
+      const t = e.target;
+      if (t instanceof Element && t.closest("input, select, textarea, [contenteditable]")) return;
+      if (document.querySelector(".fixed.inset-0")) return;
       if (e.key === "ArrowLeft") commit("nope");
       if (e.key === "ArrowRight") commit("like");
       if (e.key === "ArrowUp") commit("super");
@@ -460,7 +492,7 @@ function SwipeDeck({
           <X className="w-6 h-6" strokeWidth={2.5} />
         </button>
         <button
-          onClick={onUndo}
+          onClick={() => { if (!flying.current) onUndo(); }}
           disabled={!canUndo}
           aria-label="Rückgängig"
           className="w-11 h-11 rounded-full bg-surface border border-border flex items-center justify-center text-text-muted disabled:opacity-30 active:scale-90 transition-transform"
@@ -1007,7 +1039,11 @@ function VoiceRecorder({ onAudioChange }: { onAudioChange: (blob: Blob | null) =
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
   };
-  useEffect(() => () => { stopStream(); if (audioUrl) URL.revokeObjectURL(audioUrl); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Aktuelle Blob-URL im Ref, damit das Aufräumen beim Schließen die echte freigibt
+  // (die Closure sah sonst nur den Startwert null).
+  const audioUrlRef = useRef<string | null>(null);
+  useEffect(() => { audioUrlRef.current = audioUrl; }, [audioUrl]);
+  useEffect(() => () => { stopStream(); if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current); }, []);
 
   const pickMime = () => {
     const cands = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"];
@@ -1121,6 +1157,9 @@ function SuggestSheet({ onClose, defaultName }: { onClose: () => void; defaultNa
     document.body.style.overflow = "hidden";
     return () => { document.body.style.overflow = ""; };
   }, []);
+  const previewRef = useRef<string | null>(null);
+  useEffect(() => { previewRef.current = imagePreview; }, [imagePreview]);
+  useEffect(() => () => { if (previewRef.current) URL.revokeObjectURL(previewRef.current); }, []);
 
   const pickImage = (f: File | null) => {
     setImageFile(f);
@@ -1146,8 +1185,10 @@ function SuggestSheet({ onClose, defaultName }: { onClose: () => void; defaultNa
       fd.append("audio", audioBlob, "aufnahme.webm");
       if (name.trim()) fd.append("name", name);
     } else {
-      if (!name.trim()) { toast.error("Fast!", "Gib dem Rezept einen Namen."); return; }
-      if (!ingredients.trim() && !steps.trim()) { toast.error("Fast!", "Zutaten oder Zubereitung fehlen."); return; }
+      // Nur ein Link: den liest die n8n-Automation aus, Name und Zutaten braucht es dann nicht.
+      const linkOnly = /https?:\/\//i.test(source);
+      if (!name.trim() && !linkOnly) { toast.error("Fast!", "Gib dem Rezept einen Namen."); return; }
+      if (!linkOnly && !ingredients.trim() && !steps.trim()) { toast.error("Fast!", "Zutaten oder Zubereitung fehlen."); return; }
       fd.append("name", name);
       fd.append("description", description);
       fd.append("category", category);
@@ -1522,7 +1563,7 @@ interface GroupMatchUI { slug: string; recipeName: string; category: string; cou
 interface GroupViewUI { id: string; name: string; code: string; members: { guestId: string; name: string }[]; memberCount: number; matches: GroupMatchUI[]; evening: { plan: GroupMatchUI[]; myPicks: number } }
 
 function AccountView({
-  guestId, guestName, recipes, verdicts, ratings, dislikes, cookEvents, onOpen, onSuggest, onLogout, onPlanEvening, onSaveDislikes,
+  guestId, guestName, recipes, verdicts, ratings, dislikes, cookEvents, onOpen, onSuggest, onLogout, onPlanEvening, onSaveDislikes, onConnections,
 }: {
   guestId: string;
   guestName: string;
@@ -1536,6 +1577,7 @@ function AccountView({
   onLogout: () => void;
   onPlanEvening: (id: string, name: string) => void;
   onSaveDislikes: (list: string[]) => void;
+  onConnections: (list: Friend[]) => void; // hält das „mit wem“-Dropdown im Detail aktuell
 }) {
   const toast = useToast();
   const [friendCode, setFriendCode] = useState("");
@@ -1615,12 +1657,13 @@ function AccountView({
       if (res.ok) {
         setFriendCode(d.friendCode ?? "");
         setConnections(d.connections ?? []);
+        onConnections((d.connections ?? []).map((c: Connection) => ({ guestId: c.guestId, name: c.name })));
         setMatches(d.matches ?? []);
       }
     } catch { /* offline egal */ } finally {
       setLoading(false);
     }
-  }, [guestId, guestName]);
+  }, [guestId, guestName, onConnections]);
 
   const loadGroups = useCallback(async () => {
     try {
@@ -2129,7 +2172,9 @@ export default function RezeptePage() {
   const [dislikes, setDislikes] = useState<string[]>([]);
   const [cookEvents, setCookEvents] = useState<CookEvent[]>([]);
   const [friends, setFriends] = useState<Friend[]>([]);
-  const [history, setHistory] = useState<string[]>([]);
+  // Je Swipe der Slug und das Urteil davor — Undo stellt das vorherige wieder her
+  // (nach „Nochmal von vorn“ sind schon bewertete Karten im Stapel).
+  const [history, setHistory] = useState<{ slug: string; prev: Verdict | null }[]>([]);
   const [deckList, setDeckList] = useState<Recipe[]>([]);
   const [deckMode, setDeckMode] = useState<"new" | "all">("new"); // new = nur ungeswipte, all = alles außer „nö"
   const [suggestOpen, setSuggestOpen] = useState(false);
@@ -2146,6 +2191,8 @@ export default function RezeptePage() {
   const pendingGroupDone = useRef(false);
   const verdictsRef = useRef<Record<string, Verdict>>({});
   const filteredRef = useRef<Recipe[]>([]);
+  const savedDeckPos = useRef<{ index: number; history: { slug: string; prev: Verdict | null }[] } | null>(null); // Stapel-Position während Abend-Modus
+  const touchedRef = useRef(new Set<string>()); // in dieser Sitzung bewertete Slugs (für den /api/me-Merge)
   const startedRef = useRef(false); // true, sobald in dieser Deck-Runde geswipt wurde
   const profileRef = useRef<Record<string, number>>({});
   const dislikesRef = useRef<string[]>([]);
@@ -2183,11 +2230,12 @@ export default function RezeptePage() {
   // Gerät stimmt (der Account kann anderswo geswipt haben).
   useEffect(() => {
     if (!hydrated || !guestId) return;
-    fetch("/api/me", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ guestId, name: guestName }),
-    })
+    flushPending(guestId)
+      .then(() => fetch("/api/me", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ guestId, name: guestName }),
+      }))
       .then((r) => r.json())
       .then((d) => {
         if (d.ratings) { setRatings(d.ratings); replaceRatings(d.ratings); }
@@ -2195,12 +2243,18 @@ export default function RezeptePage() {
         if (Array.isArray(d.cooked)) setCookEvents(d.cooked);
         if (Array.isArray(d.connections)) setFriends(d.connections);
         if (!d.verdicts) return;
-        setVerdicts(d.verdicts);
-        replaceVerdicts(d.verdicts);
+        // Swipes, die während der Anfrage passiert sind, bleiben stehen (die Antwort
+        // ist älter als sie), ebenso alles, was noch nicht beim Server ist.
+        const merged: Record<string, Verdict> = { ...d.verdicts };
+        const keep = new Set([...touchedRef.current, ...Object.keys(loadPending())]);
+        const local = loadVerdicts();
+        for (const slug of keep) { if (local[slug]) merged[slug] = local[slug]; else delete merged[slug]; }
+        setVerdicts(merged);
+        replaceVerdicts(merged);
         // Deck einmalig mit den Server-Bewertungen neu bauen — solange der User
         // in dieser Runde noch nicht selbst geswipt hat (sonst nicht anfassen).
         if (!startedRef.current) {
-          setDeckList(orderDeck(filteredRef.current.filter((r) => !d.verdicts[r.slug])));
+          setDeckList(orderDeck(filteredRef.current.filter((r) => !merged[r.slug])));
           setDeckMode("new");
           setIndex(0);
           setHistory([]);
@@ -2237,15 +2291,18 @@ export default function RezeptePage() {
   // Abmelden: lokale Identität + Cache löschen → Auth-Gate erscheint wieder.
   const logout = useCallback(() => {
     try { localStorage.removeItem(NAME_KEY); localStorage.removeItem(ID_KEY); localStorage.removeItem(FAV_KEY); localStorage.removeItem(RATE_KEY); localStorage.removeItem(DISLIKE_KEY); } catch { /* ignore */ }
-    startedRef.current = false; setDeckList([]);
+    startedRef.current = false; touchedRef.current.clear(); savedDeckPos.current = null; setDeckList([]);
+    setEveningGroup(null); setDetail(null); setMatch(null);
     setGuestName(null); setGuestId(""); setVerdicts({}); setRatings({}); setDislikes([]); setCookEvents([]); setFriends([]); setHistory([]); setIndex(0); setMode("swipe");
   }, []);
 
   const handleVerdict = useCallback((r: Recipe, v: Verdict) => {
     startedRef.current = true;
+    touchedRef.current.add(r.slug);
+    const before = verdicts[r.slug] ?? null;
     saveVerdict(r.slug, v);
     setVerdicts((prev) => ({ ...prev, [r.slug]: v }));
-    setHistory((prev) => [...prev, r.slug]);
+    setHistory((prev) => [...prev, { slug: r.slug, prev: before }]);
     if (guestId && guestName) {
       postVerdict({ guestId, name: guestName, slug: r.slug, recipeName: r.name, category: r.category, verdict: v })
         .then((res) => {
@@ -2255,19 +2312,19 @@ export default function RezeptePage() {
           }
         });
     }
-  }, [guestId, guestName]);
+  }, [guestId, guestName, verdicts]);
 
+  // Seiteneffekte bewusst außerhalb des setHistory-Updaters (der läuft im StrictMode doppelt).
   const handleUndo = useCallback(() => {
-    setHistory((prev) => {
-      if (prev.length === 0) return prev;
-      const last = prev[prev.length - 1];
-      saveVerdict(last, null);
-      setVerdicts((v) => { const n = { ...v }; delete n[last]; return n; });
-      setIndex((i) => Math.max(0, i - 1));
-      if (guestId && guestName) postVerdict({ guestId, name: guestName, slug: last, verdict: null });
-      return prev.slice(0, -1);
-    });
-  }, [guestId, guestName]);
+    const last = history[history.length - 1];
+    if (!last) return;
+    setHistory(history.slice(0, -1));
+    touchedRef.current.add(last.slug);
+    saveVerdict(last.slug, last.prev);
+    setVerdicts((v) => { const n = { ...v }; if (last.prev) n[last.slug] = last.prev; else delete n[last.slug]; return n; });
+    setIndex((i) => Math.max(0, i - 1));
+    if (guestId && guestName) postVerdict({ guestId, name: guestName, slug: last.slug, verdict: last.prev });
+  }, [history, guestId, guestName]);
 
   const likeCount = Object.values(verdicts).filter((v) => v === "like").length;
   const superCount = Object.values(verdicts).filter((v) => v === "super").length;
@@ -2276,6 +2333,7 @@ export default function RezeptePage() {
   // Swipe-Index anzufassen. Gleicher Button nochmal = entfernen.
   const setDetailVerdict = useCallback((r: Recipe, v: Verdict) => {
     const next = verdicts[r.slug] === v ? null : v;
+    touchedRef.current.add(r.slug);
     saveVerdict(r.slug, next);
     setVerdicts((prev) => { const n = { ...prev }; if (next) n[r.slug] = next; else delete n[r.slug]; return n; });
     if (guestId && guestName) {
@@ -2498,25 +2556,29 @@ export default function RezeptePage() {
 
   const handleEveningVerdict = useCallback((r: Recipe, v: Verdict) => {
     if (!eveningGroup) return;
-    setHistory((prev) => [...prev, r.slug]);
+    setHistory((prev) => [...prev, { slug: r.slug, prev: null }]);
     postEvening({ action: "evening-pick", groupId: eveningGroup.id, slug: r.slug, recipeName: r.name, category: r.category, verdict: v });
   }, [eveningGroup, postEvening]);
 
   const handleEveningUndo = useCallback(() => {
-    setHistory((prev) => {
-      if (prev.length === 0) return prev;
-      const last = prev[prev.length - 1];
-      setIndex((i) => Math.max(0, i - 1));
-      if (eveningGroup) postEvening({ action: "evening-pick", groupId: eveningGroup.id, slug: last, verdict: null });
-      return prev.slice(0, -1);
-    });
-  }, [eveningGroup, postEvening]);
+    const last = history[history.length - 1];
+    if (!last) return;
+    setHistory(history.slice(0, -1));
+    setIndex((i) => Math.max(0, i - 1));
+    if (eveningGroup) postEvening({ action: "evening-pick", groupId: eveningGroup.id, slug: last.slug, verdict: null });
+  }, [history, eveningGroup, postEvening]);
 
+  // Abend-Modus teilt sich index/history mit dem Entdecken-Stapel. Beim Betreten
+  // die Position merken und beim Verlassen zurückholen — sonst begann der normale
+  // Stapel wieder bei Karte 1 mit schon bewerteten Gerichten.
   const startEvening = useCallback((id: string, name: string) => {
+    if (!eveningGroup) savedDeckPos.current = { index, history };
     setEveningGroup({ id, name }); setIndex(0); setHistory([]); setMode("swipe");
-  }, []);
+  }, [eveningGroup, index, history]);
   const exitEvening = useCallback(() => {
-    setEveningGroup(null); setIndex(0); setHistory([]);
+    const saved = savedDeckPos.current;
+    savedDeckPos.current = null;
+    setEveningGroup(null); setIndex(saved?.index ?? 0); setHistory(saved?.history ?? []);
   }, []);
   const resetEveningRound = useCallback(() => {
     if (!eveningGroup) return;
@@ -2649,6 +2711,7 @@ export default function RezeptePage() {
             onLogout={logout}
             onPlanEvening={startEvening}
             onSaveDislikes={saveDislikes}
+            onConnections={setFriends}
           />
         ) : mode === "swipe" ? (
           eveningGroup ? (

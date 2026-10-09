@@ -175,15 +175,18 @@ export async function POST(req: Request) {
       const url = linkInSource[0].replace(/[).,\]]+$/, "");
       let forwarded = false;
       try {
-        await fetch(env.N8N_LINK_WEBHOOK, {
+        const hook = await fetch(env.N8N_LINK_WEBHOOK, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ type: "recipe-link", url, name, submittedBy, submittedAt: nowIso }),
         });
-        forwarded = true;
+        forwarded = hook.ok;
+        if (!hook.ok) console.warn("[submit] link-webhook antwortet", hook.status);
       } catch (hookErr) {
         console.warn("[submit] link-webhook fehlgeschlagen:", hookErr);
       }
+      // Ging der Link nicht raus, ehrlich sagen statt „Danke!“ — sonst ist er still verloren.
+      if (!forwarded) return NextResponse.json({ error: "Der Link konnte gerade nicht weitergegeben werden. Versuch es gleich nochmal." }, { status: 502 });
       return NextResponse.json({ ok: true, mode: "link", url, forwarded });
     }
 

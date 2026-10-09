@@ -15,6 +15,7 @@
 import { NextResponse } from "next/server";
 import { readFile, writeFile, mkdir } from "fs/promises";
 import { join, basename } from "path";
+import { createHash } from "crypto";
 import { imagesDir, resolveImageFile } from "@/lib/recipes";
 import { env } from "@/lib/env";
 
@@ -26,10 +27,12 @@ const ALLOWED_WIDTHS = [400, 800, 1200];
 /** Persistenter Cache-Ordner im schreibbaren Daten-Volume */
 const CACHE_DIR = join(env.DATA_DIR, "image-cache");
 
-/** Cache-Dateiname: nur sichere Zeichen, plus Breite */
+/** Cache-Dateiname: lesbarer Teil plus Hash des echten Namens. Nur die Ersetzung
+ *  reichte nicht, „Käse.png" und „Köse.png" landeten beide auf „K_se.png". */
 function cacheKey(actualName: string, width: number): string {
   const safe = actualName.replace(/[^a-zA-Z0-9._-]/g, "_");
-  return `${safe}.${width}.webp`;
+  const hash = createHash("sha1").update(actualName).digest("hex").slice(0, 8);
+  return `${safe}.${hash}.${width}.webp`;
 }
 
 export async function GET(
@@ -43,7 +46,9 @@ export async function GET(
   const width = ALLOWED_WIDTHS.includes(requested) ? requested : 800;
 
   // Pfad-Traversal ausschliessen: nur der reine Dateiname zählt
-  const safeName = basename(decodeURIComponent(name));
+  // Next liefert den Parameter schon dekodiert; ein zweites decodeURIComponent
+  // warf bei „%" im Dateinamen einen URIError (unbehandelter 500).
+  const safeName = basename(name);
   if (!safeName || safeName.startsWith(".")) {
     return NextResponse.json({ error: "Ungültiger Dateiname" }, { status: 400 });
   }
