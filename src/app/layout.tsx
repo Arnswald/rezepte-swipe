@@ -24,9 +24,13 @@ export const metadata: Metadata = {
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
-    statusBarStyle: "black-translucent",
+    // „default“ wie Outfits: mit „black-translucent“ meldete iOS 26 der Home-Bildschirm-App beim
+    // Start eine um ~110 pt zu kurze Höhe (Leiste schwebte, Sheets endeten zu früh), bis man scrollte.
+    statusBarStyle: "default",
     title: "Rezepte",
   },
+  // Next schreibt nur „mobile-web-app-capable“; iOS liest den Apple-Namen
+  other: { "apple-mobile-web-app-capable": "yes" },
   icons: {
     icon: [{ url: "/icon.svg", type: "image/svg+xml" }],
     // iOS-Stil wie die dunklen Standard-Apps (08.10.2026), neuer Name, damit iOS nicht das alte zwischenspeichert

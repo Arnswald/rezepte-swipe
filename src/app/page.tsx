@@ -208,6 +208,14 @@ const CATEGORY_EMOJI: Record<string, string> = {
   "Salat": "🥗",
 };
 
+// Filter nur in drei Gruppen (Christian 09.10.): Frühstück, Gerichte, Dessert.
+// Soßen, Beilagen, Salate, Snacks, Getränke zählen zu „Gerichte“; die Karte zeigt weiter die echte Kategorie.
+const CAT_GROUPS = ["Frühstück", "Gerichte", "Dessert"] as const;
+const CAT_GROUP_EMOJI: Record<string, string> = { "Frühstück": "🍳", "Gerichte": "🍽️", "Dessert": "🍰" };
+function catGroup(cat: string): string {
+  return cat === "Frühstück" || cat === "Dessert" ? cat : "Gerichte";
+}
+
 // Kürzere Anzeige-Labels für die Filter-Pills (Frontmatter im Vault bleibt unverändert).
 const CATEGORY_LABEL: Record<string, string> = {
   "Hauptgericht": "Gerichte",
@@ -224,13 +232,6 @@ function trendScore(c?: TrendCount): number {
 }
 
 // Gewünschte Filter-Reihenfolge (alles andere hinten dran, alphabetisch)
-const CATEGORY_ORDER = ["Frühstück", "Hauptgericht", "Dessert"];
-function orderCategories(cats: string[]): string[] {
-  return [...cats].sort((a, b) => {
-    const ia = CATEGORY_ORDER.indexOf(a); const ib = CATEGORY_ORDER.indexOf(b);
-    return (ia === -1 ? 99 : ia) - (ib === -1 ? 99 : ib) || a.localeCompare(b);
-  });
-}
 
 function imageUrl(image: string | null, w: 400 | 800 | 1200): string | null {
   if (!image) return null;
@@ -724,11 +725,10 @@ function Collapsible({ title, icon: Icon, children, small = false }: {
 }
 
 function RecipeDetail({
-  r, onClose, verdict, onVerdict, rating = 0, onRate, dislikeHitList = [],
+  r, onClose, rating = 0, onRate, dislikeHitList = [],
   friends = [], cookEntries = [], onAddCook, onDeleteCook,
 }: {
   r: Recipe; onClose: () => void;
-  verdict?: Verdict; onVerdict?: (v: Verdict) => void;
   rating?: number; onRate?: (n: number | null) => void;
   dislikeHitList?: string[];
   friends?: Friend[];
@@ -780,7 +780,7 @@ function RecipeDetail({
         dragConstraints={{ top: 0, bottom: 0 }}
         dragElastic={{ top: 0, bottom: 0.7 }}
         onDragEnd={(_, info) => { if (info.offset.y > 110 || info.velocity.y > 600) onClose(); }}
-        className="relative w-full sm:max-w-lg max-h-[92dvh] overflow-y-auto overscroll-contain bg-surface sm:rounded-2xl rounded-t-[22px] border border-border"
+        className="relative w-full sm:max-w-lg max-h-[calc(100dvh-env(safe-area-inset-top)-10px)] overflow-y-auto overscroll-contain bg-surface sm:rounded-2xl rounded-t-[22px] border border-border"
       >
         {/* Griff: hier anfassen und nach unten ziehen */}
         <div
@@ -832,106 +832,28 @@ function RecipeDetail({
         <div className="p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] space-y-4">
           {r.description && <p className="text-[13px] text-text-secondary leading-snug line-clamp-2">{r.description}</p>}
 
-          {/* Video + Teilen */}
-          <div className="flex gap-2">
+          {/* Nährwerte + Video-Link in einer Zeile (Christian 09.10.: Zeit, Portionen, Level,
+              Bewerten und Teilen gehören nicht nach oben) */}
+          <div className="flex items-center gap-2">
+            <div className="flex-1 min-w-0"><MacroChips r={r} animate /></div>
             {r.source && (
               <a
                 href={r.source}
                 target="_blank"
                 rel="noopener noreferrer"
-                className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold active:scale-[0.97] transition-transform ${isInstagram ? "text-white" : "border border-border text-text-secondary bg-surface-elevated"}`}
-                style={isInstagram ? { background: "linear-gradient(120deg,#f09433,#e6683c 30%,#dc2743 60%,#cc2366 90%)" } : undefined}
+                className="shrink-0 inline-flex items-center gap-1.5 pl-2.5 pr-3 py-1.5 rounded-full text-xs font-semibold active:scale-95 transition-transform text-white"
+                style={{ background: isInstagram ? "linear-gradient(120deg,#f09433,#e6683c 30%,#dc2743 60%,#cc2366 90%)" : "var(--text-secondary)" }}
               >
-                {isInstagram ? <><InstagramIcon className="w-4 h-4" /> Video auf Instagram</> : <><ExternalLink className="w-4 h-4" /> Original-Quelle</>}
+                {isInstagram ? <InstagramIcon className="w-3.5 h-3.5" /> : <ExternalLink className="w-3.5 h-3.5" />}
+                {isInstagram ? "Video" : "Quelle"}
               </a>
             )}
-            <ShareButton
-              slug={r.slug}
-              name={r.name}
-              label=""
-              className={`${r.source ? "w-12" : "flex-1"} shrink-0 flex items-center justify-center rounded-xl bg-surface-elevated border border-border text-text-secondary active:scale-[0.94] transition-transform`}
-            />
           </div>
-
-          {/* Eckdaten + Nährwerte in einer Zeile */}
-          <div className="flex flex-wrap items-center gap-1.5">
-            {[
-              { icon: Clock, value: r.totalTime },
-              { icon: Users, value: r.portions ? `${r.portions} ${String(r.portions) === "1" ? "Portion" : "Portionen"}` : null },
-              { icon: Flame, value: r.difficulty },
-            ].filter((x) => x.value).map((x, i) => (
-              <span key={i} className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-surface-elevated border border-border text-xs font-medium text-text-secondary">
-                <x.icon className="w-3 h-3 text-text-muted" /> {x.value}
-              </span>
-            ))}
-            <MacroChips r={r} animate />
-          </div>
-
-          {/* Bewerten, kompakt: eine Zeile Urteil + Sterne, Koch-Verlauf aufklappbar */}
-          {onVerdict && (
-            <div className="space-y-2">
-              <div className="flex items-center gap-1.5">
-                {([["nope", X, "Nö"], ["like", Heart, "Lecker"], ["super", Star, "Super"]] as const).map(([v, Icon, label]) => {
-                  const active = verdict === v;
-                  const color = v === "nope" ? "#bd5138" : v === "like" ? "#4f9a58" : "#d99a2b";
-                  return (
-                    <motion.button
-                      key={v}
-                      whileTap={{ scale: 0.92 }}
-                      onClick={() => onVerdict(v)}
-                      aria-pressed={active}
-                      className={`flex items-center gap-1 px-2.5 py-1.5 rounded-full text-xs font-semibold border transition-colors ${active ? "text-white border-transparent" : "text-text-secondary border-border bg-surface"}`}
-                      style={active ? { background: color } : undefined}
-                    >
-                      <Icon className="w-3.5 h-3.5" /> {label}
-                    </motion.button>
-                  );
-                })}
-                {onRate && <div className="ml-auto"><StarRating value={rating} onChange={onRate} size={18} /></div>}
-              </div>
-              {dislikeHitList.length > 0 && (
-                <p className="text-[11px] text-[#bd5138] flex items-start gap-1.5">
-                  <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-px" />
-                  Enthält {dislikeHitList.join(", ")}, magst du laut deinem Account nicht.
-                </p>
-              )}
-              {onAddCook && (
-                <Collapsible
-                  title={cookEntries.length ? `Gekocht · zuletzt ${fmtDay(cookEntries[0].cookedOn)}` : "Gekocht? Eintragen"}
-                  icon={CookingPot}
-                  small
-                >
-                  <div className="space-y-2 pt-1">
-                    {cookEntries.map((e) => (
-                      <div key={e.id} className="flex items-center gap-2 text-xs">
-                        <span className="text-text-secondary">{fmtDay(e.cookedOn)}{e.withName ? ` · mit ${e.withName}` : " · alleine"}</span>
-                        {e.isAuthor && onDeleteCook && (
-                          <button onClick={() => onDeleteCook(e.id)} aria-label="Eintrag entfernen" className="ml-auto text-text-muted active:scale-90 transition-transform">
-                            <X className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                      </div>
-                    ))}
-                    <div className="flex items-center gap-1.5">
-                      <div className="relative shrink-0">
-                        <select value={cookPartner} onChange={(e) => setCookPartner(e.target.value)}
-                          className="appearance-none min-w-[92px] text-xs bg-surface border border-border rounded-lg pl-2.5 pr-7 py-1.5 text-text-secondary">
-                          <option value="">Alleine</option>
-                          {friends.map((f) => <option key={f.guestId} value={f.guestId}>mit {f.name}</option>)}
-                        </select>
-                        <ChevronDown className="w-3.5 h-3.5 text-text-muted absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
-                      </div>
-                      <input type="date" value={cookDate} max={todayISO()} onChange={(e) => setCookDate(e.target.value)}
-                        className="flex-1 min-w-0 text-xs bg-surface border border-border rounded-lg px-2 py-1.5 text-text-secondary" />
-                      <button onClick={() => onAddCook(cookPartner || null, cookDate || todayISO())}
-                        className="shrink-0 text-xs font-semibold text-white bg-accent px-3 py-1.5 rounded-lg active:scale-95 transition-transform">
-                        Eintragen
-                      </button>
-                    </div>
-                  </div>
-                </Collapsible>
-              )}
-            </div>
+          {dislikeHitList.length > 0 && (
+            <p className="text-[11px] text-[#bd5138] flex items-start gap-1.5">
+              <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-px" />
+              Enthält {dislikeHitList.join(", ")}, magst du laut deinem Account nicht.
+            </p>
           )}
 
           {/* Zutaten mit Abhak-Funktion */}
@@ -1001,6 +923,58 @@ function RecipeDetail({
               )}
             </div>
           )}
+
+          {/* Ganz unten: Bewerten, Koch-Verlauf, Teilen */}
+          <div className="pt-2 space-y-3 border-t border-border">
+            {onRate && (
+              <div className="flex items-center justify-between pt-2">
+                <span className="text-xs text-text-muted">Deine Bewertung</span>
+                <StarRating value={rating} onChange={onRate} size={20} />
+              </div>
+            )}
+            {onAddCook && (
+              <Collapsible
+                title={cookEntries.length ? `Gekocht · zuletzt ${fmtDay(cookEntries[0].cookedOn)}` : "Gekocht? Eintragen"}
+                icon={CookingPot}
+                small
+              >
+                <div className="space-y-2 pt-1">
+                  {cookEntries.map((e) => (
+                    <div key={e.id} className="flex items-center gap-2 text-xs">
+                      <span className="text-text-secondary">{fmtDay(e.cookedOn)}{e.withName ? ` · mit ${e.withName}` : " · alleine"}</span>
+                      {e.isAuthor && onDeleteCook && (
+                        <button onClick={() => onDeleteCook(e.id)} aria-label="Eintrag entfernen" className="ml-auto text-text-muted active:scale-90 transition-transform">
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                  <div className="flex items-center gap-1.5">
+                    <div className="relative shrink-0">
+                      <select value={cookPartner} onChange={(e) => setCookPartner(e.target.value)}
+                        className="appearance-none min-w-[92px] text-xs bg-surface border border-border rounded-lg pl-2.5 pr-7 py-1.5 text-text-secondary">
+                        <option value="">Alleine</option>
+                        {friends.map((f) => <option key={f.guestId} value={f.guestId}>mit {f.name}</option>)}
+                      </select>
+                      <ChevronDown className="w-3.5 h-3.5 text-text-muted absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    </div>
+                    <input type="date" value={cookDate} max={todayISO()} onChange={(e) => setCookDate(e.target.value)}
+                      className="flex-1 min-w-0 text-xs bg-surface border border-border rounded-lg px-2 py-1.5 text-text-secondary" />
+                    <button onClick={() => onAddCook(cookPartner || null, cookDate || todayISO())}
+                      className="shrink-0 text-xs font-semibold text-white bg-accent px-3 py-1.5 rounded-lg active:scale-95 transition-transform">
+                      Eintragen
+                    </button>
+                  </div>
+                </div>
+              </Collapsible>
+            )}
+            <ShareButton
+              slug={r.slug}
+              name={r.name}
+              label="Rezept teilen"
+              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm text-text-secondary active:bg-surface-elevated transition-colors"
+            />
+          </div>
         </div>
       </motion.div>
     </div>
@@ -2327,20 +2301,6 @@ export default function RezeptePage() {
   const likeCount = Object.values(verdicts).filter((v) => v === "like").length;
   const superCount = Object.values(verdicts).filter((v) => v === "super").length;
 
-  // Verdict aus dem Detail-Sheet setzen (z.B. aus „Alle Gerichte") — ohne den
-  // Swipe-Index anzufassen. Gleicher Button nochmal = entfernen.
-  const setDetailVerdict = useCallback((r: Recipe, v: Verdict) => {
-    const next = verdicts[r.slug] === v ? null : v;
-    touchedRef.current.add(r.slug);
-    saveVerdict(r.slug, next);
-    setVerdicts((prev) => { const n = { ...prev }; if (next) n[r.slug] = next; else delete n[r.slug]; return n; });
-    if (guestId && guestName) {
-      postVerdict({ guestId, name: guestName, slug: r.slug, recipeName: r.name, category: r.category, verdict: next })
-        .then((res) => {
-          if ((next === "like" || next === "super") && res?.matches?.length) setMatch({ recipe: r, partners: res.matches });
-        });
-    }
-  }, [verdicts, guestId, guestName]);
 
   // Sterne-Bewertung (nach dem Kochen). stars null = entfernen.
   const handleRating = useCallback((r: Recipe, stars: number | null) => {
@@ -2436,7 +2396,7 @@ export default function RezeptePage() {
 
   const filtered = useMemo(() => {
     if (activeCat === "Alle") return recipes;
-    return recipes.filter((r) => r.category === activeCat);
+    return recipes.filter((r) => catGroup(r.category) === activeCat);
   }, [recipes, activeCat]);
 
   // verdicts + filtered immer aktuell im Ref halten (für den Deck-Aufbau nach
@@ -2603,6 +2563,20 @@ export default function RezeptePage() {
     ? (eveningRecipes.length > 0 && index < eveningRecipes.length)
     : (deckList.length > 0 && index < deckList.length));
 
+  // iOS-26-Fehler der Home-Bildschirm-App: beim Start ist der Viewport zu kurz, erst ein Scroll
+  // korrigiert ihn (Christian: „sobald ich hochziehe“). Die Seite scrollt hier nie selbst, also
+  // einmal künstlich 1 px scrollen und zurück.
+  useEffect(() => {
+    const nav = navigator as Navigator & { standalone?: boolean };
+    if (!nav.standalone) return;
+    const html = document.documentElement;
+    const prev = html.style.height;
+    html.style.height = "calc(100% + 1px)";
+    window.scrollTo(0, 1);
+    const t = setTimeout(() => { window.scrollTo(0, 0); html.style.height = prev; }, 60);
+    return () => clearTimeout(t);
+  }, []);
+
   // Raster und Profil teilen sich den Scroll-Container → beim Bereichswechsel oben anfangen
   const contentRef = useRef<HTMLDivElement>(null);
   useEffect(() => { contentRef.current?.scrollTo({ top: 0 }); }, [mode]);
@@ -2637,9 +2611,9 @@ export default function RezeptePage() {
       <div
         ref={headerRef}
         className={scrollMode
-          ? "absolute inset-x-0 top-0 z-30 px-4 pb-7 pt-[calc(env(safe-area-inset-top)+0.75rem)] pointer-events-none [&>*]:pointer-events-auto"
+          ? "absolute inset-x-0 top-0 z-30 px-4 pb-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] pointer-events-none [&>*]:pointer-events-auto"
           : "shrink-0 pt-[calc(env(safe-area-inset-top)+0.75rem)]"}
-        style={scrollMode ? { background: "linear-gradient(to bottom, var(--bg) 0%, var(--bg) calc(100% - 1.75rem), color-mix(in srgb, var(--bg) 0%, transparent) 100%)" } : undefined}
+        style={scrollMode ? { background: "linear-gradient(to bottom, var(--bg) 0%, var(--bg) calc(100% - 1rem), color-mix(in srgb, var(--bg) 0%, transparent) 100%)" } : undefined}
       >
       {/* Großer Titel wie in Outfits; die Bereiche wechselt die Glas-Leiste unten */}
       <div className="flex items-end justify-between gap-3 pt-1 pb-1">
@@ -2650,15 +2624,15 @@ export default function RezeptePage() {
 
       {/* Kategorie-Filter — dezent, eine Reihe (nicht im Account, nicht im Abend-Modus) */}
       {mode !== "account" && !eveningGroup && categories.length > 0 && (
-        <div className="flex flex-nowrap items-center gap-1.5 shrink-0 mt-3 overflow-x-auto scrollbar-none -mx-4 px-4">
-          {["Alle", ...orderCategories(categories)].map((cat) => {
+        <div className="flex flex-nowrap items-center gap-2 shrink-0 mt-3 overflow-x-auto scrollbar-none -mx-4 px-4">
+          {["Alle", ...CAT_GROUPS].map((cat) => {
             const active = activeCat === cat;
             return (
               <button
                 key={cat}
                 onClick={() => setActiveCat(cat)}
-                className={`relative shrink-0 whitespace-nowrap px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors ${
-                  active ? "text-white border-transparent" : "bg-transparent border-border/50 text-text-muted/70 hover:text-text-secondary"
+                className={`relative shrink-0 whitespace-nowrap px-3.5 py-1.5 rounded-full text-[13px] font-semibold border transition-colors active:scale-95 ${
+                  active ? "text-white border-transparent" : "bg-surface/60 border-border text-text-secondary"
                 }`}
               >
                 {active && (
@@ -2669,7 +2643,7 @@ export default function RezeptePage() {
                   />
                 )}
                 <span className="relative z-10">
-                  {cat === "Alle" ? "Alle" : `${CATEGORY_EMOJI[cat] ?? ""} ${catLabel(cat)}`}
+                  {cat === "Alle" ? "Alle" : `${CAT_GROUP_EMOJI[cat]} ${cat}`}
                 </span>
               </button>
             );
@@ -2683,7 +2657,7 @@ export default function RezeptePage() {
         ref={contentRef}
         onScroll={mode === "grid" ? onGridScroll : undefined}
         className={showDeck ? "flex-1 min-h-0 flex flex-col mt-4" : "flex-1 min-h-0 overflow-y-auto overflow-x-hidden -mx-4 px-4 pb-[calc(env(safe-area-inset-bottom)+14px+64px+2rem)]"}
-        style={scrollMode ? { paddingTop: Math.max(headerH - 12, 0) } : undefined}
+        style={scrollMode ? { paddingTop: Math.max(headerH - 4, 0) } : undefined}
       >
         {loading ? (
           <div className="flex justify-center py-20">
@@ -2915,8 +2889,6 @@ export default function RezeptePage() {
             key={detail.slug}
             r={detailRecipe}
             onClose={() => setDetail(null)}
-            verdict={verdicts[detail.slug]}
-            onVerdict={(v) => setDetailVerdict(detail, v)}
             rating={ratings[detail.slug] ?? 0}
             onRate={(n) => handleRating(detail, n)}
             dislikeHitList={dislikeHits(detail, dislikes)}
