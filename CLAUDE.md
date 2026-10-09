@@ -314,6 +314,7 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
 - **Abend-Modus teilt `index`/`history`** mit dem Entdecken-Stapel → Position in `savedDeckPos` merken und beim Verlassen zurückholen.
 - **Bild-Route:** Next liefert `params` schon dekodiert (zweites `decodeURIComponent` → 500 bei „%“); Cache-Key mit Hash, „Käse“/„Köse“ kollidierten.
 - **Test im eingebauten Browser-Bereich:** ist der Bereich ausgeblendet, läuft kein `requestAnimationFrame` → framer-Animationen hängen, Sheets schließen nicht. Kein App-Fehler; Logik per JS prüfen, Optik im Simulator.
+- **Doppelte Rezepte im Vault** (gleicher Link, von Claude anders benannt): `scanRecipes` zeigt je Quelle nur eins (`sourceKey`, IG per Post-ID). Ursache abgestellt in WF10b („Schon im Kochbuch?“ vor dem Scrapen).
 - **Offen (Entscheidung Christian):** Die guestId ist das einzige Geheimnis und wird über Matches/Gruppen an andere ausgeliefert. Richtige Lösung: Session-Cookie beim Login, guestId serverseitig ableiten (alle müssen sich einmal neu anmelden).
 
 ## Konventionen

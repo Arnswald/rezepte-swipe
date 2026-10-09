@@ -367,9 +367,27 @@ export function scanRecipes(): Recipe[] {
     const r = parseRecipeFile(join(dir, file), imgDir);
     if (r) recipes.push(r);
   }
-  // Neueste zuerst
-  recipes.sort((a, b) => b.created.localeCompare(a.created));
-  return recipes;
+  // Neueste zuerst (bei gleichem Datum stabil nach Slug)
+  recipes.sort((a, b) => b.created.localeCompare(a.created) || a.slug.localeCompare(b.slug));
+  // Zweites Netz gegen Doppelungen im Vault: gleiche Quelle = gleiches Rezept, nur einmal
+  // zeigen. Entstanden, wenn die Automation einen Link zweimal bekam und Claude den Namen
+  // anders vergab. Seit 09.10.2026 prüft WF10b das schon vor dem Anlegen.
+  const seen = new Set<string>();
+  return recipes.filter((r) => {
+    const key = sourceKey(r.source);
+    if (!key) return true;
+    if (seen.has(key)) { console.warn(`[recipes] Doppelte Quelle, ausgeblendet: ${r.slug}`); return false; }
+    seen.add(key);
+    return true;
+  });
+}
+
+/** Vergleichsschlüssel einer Quelle: Instagram per Post-ID (/p/, /reel/ egal), sonst URL ohne Query. */
+export function sourceKey(u: string | null): string {
+  if (!u) return "";
+  const ig = u.match(/instagram\.com\/(?:[^/]+\/)?(?:p|reel|reels|tv)\/([A-Za-z0-9_-]+)/i);
+  if (ig) return `ig:${ig[1]}`;
+  return u.trim().toLowerCase().replace(/^https?:\/\/(www\.)?/, "").replace(/[?#].*$/, "").replace(/\/+$/, "");
 }
 
 /**
