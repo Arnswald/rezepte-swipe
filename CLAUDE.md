@@ -88,7 +88,10 @@ Body-H2-Sektionen: `📋 Überblick` (Tabelle mit Gesamtzeit/Portionen/Schwierig
 `💡 Tipps`. Bild-Auflösung ist **case-insensitiv** (Linux-Container ist
 case-sensitive, macOS/Frontmatter oft nicht).
 Optional `bildfokus:` (seit 17.10.2026): wo im Titelbild das Gericht sitzt, z. B. `"50 70"` (x y in %),
-`"70"` (nur senkrecht) oder `unten` / `oben links`. Übersteuert den automatischen Bildfokus.
+`"70"` (nur senkrecht) oder `unten` / `oben links`. Übersteuert den automatischen Bildfokus. Gilt für das **Kartenbild**
+(also fürs KI-Bild, wenn die Karte das KI-Bild zeigt).
+Optional `kartenbild: ki | original` (seit 17.10.2026): welches Bild Karte, Raster, Detail-Kopf und Teilen-Vorschau zeigen.
+Übersteuert die Einstufung in `src/lib/kartenbild.json` (siehe „Kartenbild“ unten). `ki` wirkt nur, wenn `<slug>_KI.jpg` existiert.
 
 **Kategorien:** Am 27.07.2026 auf 3 reduziert (`Hauptgericht`, `Frühstück`, `Dessert`; „Salat" → Hauptgericht,
 „Snack" → Dessert). Die verbindliche Liste in `00 System/config/Kochbuch-Struktur.md` hat aber 9 Werte, und die
@@ -333,6 +336,15 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
 - **Erste Ansicht:** `/api/recipes?lite=1` wird per `<link rel=preload>` mit dem HTML geholt (darum kein `cache: "no-store"` beim fetch), Antwort mit ETag → 304 beim erneuten Öffnen. Vor dem Hydrieren und solange der Stapel baut: `DeckSkeleton` (CLS war 0,13 durch den Wechsel Scroll-↔Stapel-Layout und ein kurz aufblitzendes „Alles durchgeswiped!“).
 - **Vorausladen:** im `SwipeDeck` als unsichtbare `<picture>` (Karten +3 bis +5), erst nachdem das vorderste Bild da ist.
 - `scanRecipes` ist 20 s gemerkt, das Bilder-Verzeichnis 10 s (vorher ≈190 × `readdir` pro Anfrage).
+
+## Kartenbild: Profilbild oder KI-Bild (bildwahl-1018, 17.10.2026)
+
+- **Problem:** Viele Profilbilder sind Instagram-Standbilder mit Person (Gesicht, Oberkörper) oder Schrift, aber ohne erkennbares Gericht (Beispiel Spiegeleier: Mann im Tanktop mit Baguette). 94 Rezepte haben zusätzlich ein KI-Bild `<slug>_KI.jpg`.
+- **`src/lib/kartenbild.json`:** alle 187 Profilbilder von Hand am Kontaktbogen (4:5-Zuschnitt um den Bildfokus, so wie die Karte ihn zeigt) eingestuft: `slug → { kategorie: gericht|person|schrift|unklar, quelle: ki|original, grund, kiPasst? }`. Stand: 144 gericht, 34 person, 4 schrift, 5 unklar. `quelle: ki` = kein Gericht zu sehen **und** ein passendes KI-Bild existiert (25 Rezepte). `kiPasst: false` = KI-Bild zeigt ein anderes Gericht (fluffy-jell-o, matthew-mcconaugheys-thunfischsalat, grillfackeln-mit-kraeuterbutter), dann bleibt das Original.
+- **Logik (`recipes.ts`):** `image` ist jetzt das **Kartenbild**; alle Ansichten (Karte, Raster, Favoriten, Detail-Kopf, Teilen-/WhatsApp-Vorschau) nehmen es automatisch. Reihenfolge: Frontmatter `kartenbild` → `kartenbild.json` → Original. Das Kartenbild steht in `images` immer vorn, das Profilbild direkt dahinter (bleibt in der Galerie). Neue Rezepte, die nicht in der Datei stehen, zeigen das Original.
+- **Kennzeichnung:** nur in der Detail-Galerie („1 / 2 · KI-Bild“ in der Zähler-Pille, bei nur einem Bild eigene kleine Pille). Auf der Karte bewusst nicht: dort stehen schon Kategorie, Zähler, „Rezept“-Knopf und Chips, ein weiteres Abzeichen wäre Unruhe; die KI-Bilder sind als Foto des Gerichts gemeint, die Offenlegung im Detail reicht.
+- **Neue Rezepte einstufen:** Kontaktbogen bauen (Karten-Zuschnitt vom Server holen: `/api/recipes/image/<datei>?w=480&ar=4x5&fmt=webp&v=2`), ansehen, Eintrag in `kartenbild.json` ergänzen. Oder einfach `kartenbild: ki` ins Frontmatter.
+- `bildfokus` hilft bei den Personen-Bildern ohne KI-Bild meist nicht: das Gericht sitzt am unteren Bildrand, der Fokus steht dort schon am Anschlag (80 %). Da hilft nur ein neues KI-Bild.
 
 ## Konventionen
 

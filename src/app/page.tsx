@@ -40,10 +40,12 @@ interface Recipe {
   protein: number | null;
   carbs: number | null;
   fat: number | null;
+  /** Kartenbild (Profilbild oder, bei Standbildern ohne Gericht, das KI-Bild) */
   image: string | null;
+  imageIsAi?: boolean;
   imageExists: boolean;
   images: string[];
-  /** Von Hand gesetzter Bildfokus des Titelbilds [x, y] in % (Frontmatter `bildfokus`) */
+  /** Von Hand gesetzter Bildfokus des Kartenbilds [x, y] in % (Frontmatter `bildfokus`) */
   imageFocus?: [number, number] | null;
   created: string;
   source: string | null;
@@ -786,13 +788,24 @@ function GalleryHeader({ r }: { r: Recipe }) {
     );
   }
 
-  // Fokus aus dem Frontmatter gilt nur fürs Titelbild
+  // Fokus aus dem Frontmatter gilt nur fürs Kartenbild
   const focusOf = (img: string) => (img === r.image ? r.imageFocus : null);
+  // KI-Bilder werden nur hier gekennzeichnet, nicht auf der Karte (dort wäre jedes Abzeichen Unruhe)
+  const isAi = (img: string) => /_ki\.(jpe?g|png|webp)$/i.test(img);
   if (imgs.length === 1) {
     // Lupe braucht eine einzelne URL (Hintergrundbild) → WebP; Zuschnitt 16:10 = Kopfformat,
     // dadurch stimmt die Lupenposition jetzt auch (vorher schnitt object-cover unsichtbar ab).
     const src = imageSrc(imgs[0], "detail", 1080, "webp", focusOf(imgs[0]));
-    return <Lens src={src} alt={r.name} zoom={2.2} lensSize={150} className="w-full h-full" />;
+    return (
+      <div className="relative w-full h-full">
+        <Lens src={src} alt={r.name} zoom={2.2} lensSize={150} className="w-full h-full" />
+        {isAi(imgs[0]) && (
+          <span className="absolute top-3 left-3 z-20 px-2 py-0.5 rounded-full bg-black/55 backdrop-blur-sm text-white text-[10px] font-medium pointer-events-none">
+            KI-Bild
+          </span>
+        )}
+      </div>
+    );
   }
 
   return (
@@ -818,7 +831,7 @@ function GalleryHeader({ r }: { r: Recipe }) {
         ))}
       </div>
       <span className="absolute top-3 left-3 z-20 px-2 py-0.5 rounded-full bg-black/55 backdrop-blur-sm text-white text-[10px] font-medium tabular-nums pointer-events-none">
-        {active + 1} / {imgs.length}
+        {active + 1} / {imgs.length}{isAi(imgs[active] ?? "") ? " · KI-Bild" : ""}
       </span>
     </div>
   );
