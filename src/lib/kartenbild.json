@@ -1,0 +1,940 @@
+{
+ "airfryer-corn-ribs": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "airfryer-crispy-gold-chicken-nuggets": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "allioli-de-miel": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "avocado-pasta": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "avocado-toast-sockeye-lachs": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "bacon-egg-and-cheese-rice-paper-spiral": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "baked-feta-salmon-pasta": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "banane-avoine-yaourt-bowl": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "bananen-kokos-cookies": {
+  "kategorie": "person",
+  "quelle": "original",
+  "grund": "Mann mit Cookie in der Hand, Bleche nur am Rand"
+ },
+ "blaubeer-chia-marmelade": {
+  "kategorie": "unklar",
+  "quelle": "original",
+  "grund": "Blaubeeren in der Pfanne unter Schrift „Healthy Jam!“, fertige Marmelade nicht zu sehen"
+ },
+ "blaubeer-minz-limonade-als-eiswuerfel": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "blitz-naan-aus-sonntagsbroetchen-teig": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "blumen-pancakes-mit-lebensmittelfarbe": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "blumen-spiegelei": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "brookies": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "bud-spencer-terence-hill-bohnen-eintopf": {
+  "kategorie": "person",
+  "quelle": "ki",
+  "grund": "Filmszene: Mann isst, kein Teller zu sehen"
+ },
+ "bunte-frucht-eislutscher": {
+  "kategorie": "person",
+  "quelle": "original",
+  "grund": "Kind und Mann halten Eis hoch"
+ },
+ "burrata-toast-mit-geroesteter-pfirsich-und-serrano-schinken": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "camping-croissant-mit-schokolade": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "caramelised-shallot-tatin": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "chateaubriand": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "cheesy-egg-and-beef-breakfast-rolls": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "chicken-breast-boats": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "chicken-burger": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "chicken-nourish-bowl": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "chocolate-raspberry-chia-pudding": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "christmas-tree-brie-appetisers": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "cinnamon-apple-pie-yogurt": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "club-sandwich": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "coconut-protein-ice-pops": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "corn-ribs": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "cremige-brokkoli-pasta": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "cremiger-thunfisch-gurken-salat": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Titelbild ist schon das KI-Bild"
+ },
+ "crispy-chicken-crispy-chickpeas-on-avocado-dip": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "crispy-corn-sticks": {
+  "kategorie": "person",
+  "quelle": "original",
+  "grund": "schwarzer Handschuh auf Holzbrett, kein Gericht"
+ },
+ "crispy-rice-omelette": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "croissant-mit-eis-und-frischen-fruechten": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "crunchy-chicken-taco-salad": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "crunchy-gnocchi-salat-mit-feta-dip": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "crunchy-nudelsalat": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "date-balls": {
+  "kategorie": "person",
+  "quelle": "ki",
+  "grund": "Koch in der Küche mit Blech, Date Balls nicht zu sehen"
+ },
+ "date-snickers-bark": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "dattel-halloumi-spiesze": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "dirty-spaghetti": {
+  "kategorie": "person",
+  "quelle": "ki",
+  "grund": "Mann am Herd von der Seite, Spaghetti nicht zu sehen"
+ },
+ "easy-protein-mochi": {
+  "kategorie": "person",
+  "quelle": "original",
+  "grund": "Frau an der Arbeitsplatte, Mochi nicht zu sehen"
+ },
+ "easy-strawberry-mousse": {
+  "kategorie": "person",
+  "quelle": "original",
+  "grund": "Mann + Schrift, Mousse-Gläser unten nur klein"
+ },
+ "edamame-tacos": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "fajita-chicken-mac-n-cheese": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "feigen-carpaccio": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "fenchel-orangenbutter": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "feta-watermelon-bites-mit-spicy-balsamic-honey": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "firinda-sogan-dolmasi": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "flache-croissants-mit-birne-und-brie": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "fluffy-jell-o": {
+  "kategorie": "schrift",
+  "quelle": "original",
+  "grund": "Schrift „High protein jello“ über allem, Mann dahinter. KI zeigt geschichtetes Gelee-Trifle mit gelber Creme, das Rezept ist eine einfarbige Joghurt-Jello-Creme, darum Original",
+  "kiPasst": false
+ },
+ "fluffy-jello-dessert": {
+  "kategorie": "person",
+  "quelle": "original",
+  "grund": "Gesicht + Schrift dominieren, Jello-Form in der Mitte erkennbar"
+ },
+ "fondant-kartoffeln": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "frozen-blueberry-dark-chocolate-yoghurt-bites": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "frozen-peanut-butter-yogurt-bites": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "frucht-salat": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "fruehlingszwiebel-curls": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "gebackener-butternut-kuerbis-mit-camembert": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "gebackener-feta-mit-pasta-und-brokkoli": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "gefrorene-erdbeer-cluster-mit-matcha-schokolade": {
+  "kategorie": "person",
+  "quelle": "ki",
+  "grund": "Frau, Gesicht nimmt halbe Karte ein, Cluster nur in der Hand"
+ },
+ "gefrorene-trauben-mit-zitrone-und-zucker": {
+  "kategorie": "person",
+  "quelle": "original",
+  "grund": "Frau (Oberkörper) hält Traubenschale"
+ },
+ "gefrorene-zitrone-zitronen-schnee": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "gefuellte-paprika-tuerkische-dolma": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "gegrillte-ananas-habanero-salsa": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "gegrillte-bananen-chia-bowl": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "geheimzutat-brownies": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "gesunde-gemueserolle": {
+  "kategorie": "person",
+  "quelle": "original",
+  "grund": "Mann mit Gemüserolle, Gesicht groß"
+ },
+ "gesunde-oat-chia-wraps": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "gnocchi-auflauf-haehnchen-feta": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "granatapfel-rotkohl-salat": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "grillfackeln-mit-kraeuterbutter": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar. KI zeigt Speck-Spieße, das Rezept sind Brot-Spiralen aus Pizzateig",
+  "kiPasst": false
+ },
+ "haehnchen-erbsenpueree-suesskartoffel": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "healthy-chia-cheesecake": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "high-protein-breakfast-muffins": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "high-protein-chocolate-date-mousse": {
+  "kategorie": "person",
+  "quelle": "ki",
+  "grund": "Gesicht füllt die obere Hälfte, Mousse-Gläser unten klein"
+ },
+ "high-protein-edamame-tacos": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "high-protein-egg-muffins": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "high-protein-hackfleisch-pockets": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "high-protein-mango-cheesecake": {
+  "kategorie": "person",
+  "quelle": "ki",
+  "grund": "Mann mit Mango-Packung + Untertitel, kein Kuchen"
+ },
+ "high-protein-mango-chia-seed-pudding": {
+  "kategorie": "person",
+  "quelle": "ki",
+  "grund": "Mann gießt in leere Gläser, kein Pudding"
+ },
+ "high-protein-mealprep-orzo-auflauf": {
+  "kategorie": "person",
+  "quelle": "original",
+  "grund": "Mann posiert + Schrift, kein Auflauf"
+ },
+ "high-protein-potato-dill-flatbreads-with-tuna-and-egg": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "high-protein-quinoa-crunch-bites": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "high-protein-reeses-yogurt-cups": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "high-protein-salad-bowl": {
+  "kategorie": "person",
+  "quelle": "original",
+  "grund": "Mann oben, Salat-Gläser unten"
+ },
+ "high-protein-schoko-broetchen": {
+  "kategorie": "person",
+  "quelle": "ki",
+  "grund": "Mann im Supermarkt + Schrift, keine Brötchen"
+ },
+ "high-protein-shakshouka": {
+  "kategorie": "person",
+  "quelle": "ki",
+  "grund": "Mann schneidet Brot, Shakshuka-Pfanne klein im Hintergrund"
+ },
+ "high-protein-smash-low-cal": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "high-protein-sweet-potato-steak-bites": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "high-protein-tortilla-quiche": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "hongkong-mango-pancakes": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "honig-porridge-zum-abnehmen": {
+  "kategorie": "person",
+  "quelle": "ki",
+  "grund": "Mann im Hoodie, Porridge-Dose klein in der Mitte"
+ },
+ "hot-honey-crispy-chilli-oil-eggs": {
+  "kategorie": "unklar",
+  "quelle": "original",
+  "grund": "leere Pfanne mit Honig, kein Gericht zu sehen"
+ },
+ "hurma-bar": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "japanisches-egg-sandwich-tamago-sando": {
+  "kategorie": "person",
+  "quelle": "ki",
+  "grund": "lachender Koch, Sandwich klein in den Händen"
+ },
+ "kaiserschmarrn-protein": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "karamellisierte-pesto-butter": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "karamellisiertes-blumenkohl-pueree": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "karotten-gurken-schaelsalat": {
+  "kategorie": "person",
+  "quelle": "ki",
+  "grund": "Frau lässt Gemüse fallen, Salat nur angeschnitten"
+ },
+ "kartoffelkloesse-nach-omas-rezept": {
+  "kategorie": "person",
+  "quelle": "original",
+  "grund": "junger Mann mit Topf, Klöße nicht zu erkennen"
+ },
+ "kebab-spiesze": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "kinder-bueno-torte": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "klassische-mahonesa": {
+  "kategorie": "unklar",
+  "quelle": "ki",
+  "grund": "Eigelb wird in eine Schüssel gegeben, keine Mayonnaise zu sehen"
+ },
+ "koellefornia-burger": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "kohlblatt-hackfleisch-roellchen": {
+  "kategorie": "person",
+  "quelle": "ki",
+  "grund": "Frau mit Kohlkopf + Gesicht unten rechts, keine Röllchen"
+ },
+ "konfierte-eigelbe-in-olivenoel": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "konfiertes-eigelb": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "kraftpaket-bowl": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "lachs-sahne-nudeln": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "lachs-tataki-auf-avocado-mousse": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "lampone-snack": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "lemon-protein-gummies": {
+  "kategorie": "person",
+  "quelle": "ki",
+  "grund": "Frau + Schrift, Gummies klein in der Hand"
+ },
+ "limetten-erdnuss-haehnchen": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "loaded-sweet-potato-mit-hackfleisch-bohnen-avocado-cheddar": {
+  "kategorie": "person",
+  "quelle": "ki",
+  "grund": "Mann mit Süßkartoffeln über leeren Dosen"
+ },
+ "maisbomben": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "makrele-mit-butternut-kuerbis": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "mango-cheesecake": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "mango-chia-oat-pudding": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "mango-sticky-rice-tiramisu": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "mango-sticky-rice-with-coconut-sauce": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "matthew-mcconaugheys-thunfischsalat": {
+  "kategorie": "person",
+  "quelle": "original",
+  "grund": "Frau an der Arbeitsplatte + Einblendung McConaughey. KI zeigt Salat mit gebratenem Thunfischsteak, das Rezept ist Dosenthunfisch mit Mayo, Apfel, Mais, darum Original",
+  "kiPasst": false
+ },
+ "mcchicken-style-rice-paper-roll": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "mediterraner-orzo-halloumi-salat": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "meine-lieblings-vinaigrette": {
+  "kategorie": "person",
+  "quelle": "ki",
+  "grund": "Mann probiert vom Löffel, Vinaigrette nicht zu sehen"
+ },
+ "melonen-feta-salat-mit-tropea-zwiebel-und-mandeln": {
+  "kategorie": "unklar",
+  "quelle": "ki",
+  "grund": "Zutaten auf der Arbeitsplatte (Melone, Gurke), kein Salat"
+ },
+ "mexican-style-roasted-sweet-potatoes": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "narduni-chicken-haehnchen-in-granatapfel-sauce": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "one-pot-high-protein-orzo": {
+  "kategorie": "person",
+  "quelle": "ki",
+  "grund": "Mann hält Feta über Zutaten, kein Orzo"
+ },
+ "overnight-chiapudding": {
+  "kategorie": "person",
+  "quelle": "ki",
+  "grund": "Mann + Schrift „Wenn du Chiasamen“, leere Gläser"
+ },
+ "pad-kra-pao": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "parmesan-zucchini-rings": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "pasta-al-burro": {
+  "kategorie": "person",
+  "quelle": "original",
+  "grund": "Mann schüttet Nudeln in den Topf"
+ },
+ "pasta-aus-dem-parmesanlaib": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "pasta-carbonara-mit-avocado": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "peanut-butter-cheesecake-overnight-oats": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "Pfirsich Hähnchen": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "pfirsich-prosciutto-salat-mit-burrata": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "pommes-dauphine": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "protein-banana-bark": {
+  "kategorie": "person",
+  "quelle": "ki",
+  "grund": "Frau (Gesicht, Oberkörper) hält Bark-Stücke"
+ },
+ "protein-brownie": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "protein-frambini-dessert": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "protein-kuchen": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "protein-pancakes": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "protein-sweet-potato-boats": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "protein-zitronen-mit-skyr": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "ruehrei-in-der-edelstahlpfanne": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "schnelle-lahmacun": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "schnelle-tortilla-mit-erbsen": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "schnelle-und-einfache-sushi-rolle": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "schoko-happen-mit-nuessen": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "schokoladen-bananen-muffins": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "schokoladen-reiskuchen-mit-erdnussbutter-und-blaubeeren": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "shredded-veggie-roll": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "skyr-kuchen": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "slow-cooker-meal-prep-basis": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "smashed-butter-beans": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "smashed-sweet-potato-pizza": {
+  "kategorie": "unklar",
+  "quelle": "ki",
+  "grund": "halbe gebackene Süßkartoffel auf dem Blech, keine Pizza"
+ },
+ "smoky-harissa-chicken-quesadillas": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "snickers-banana-bark": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "sogan-dolmasi-gefuellte-zwiebeln": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "spaghetti-eis-kaesekuchen": {
+  "kategorie": "schrift",
+  "quelle": "ki",
+  "grund": "große Schrift „Spaghettieis Kuchen“ + Gesicht, Kuchen unten klein"
+ },
+ "spaghetti-eis-pudding": {
+  "kategorie": "person",
+  "quelle": "ki",
+  "grund": "Frau mit Schokoladentafel, Pudding-Schüssel unten angeschnitten"
+ },
+ "spaghetti-piccata-mit-tomaten-sugo": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "spiegeleier-mit-tomaten-und-kaese": {
+  "kategorie": "person",
+  "quelle": "original",
+  "grund": "Mann im Tanktop mit Baguette, Pfanne unten klein"
+ },
+ "spinat-eiweissauflauf": {
+  "kategorie": "schrift",
+  "quelle": "ki",
+  "grund": "Schrift „High Protein Spinat Lasagne mit 97g Eiweiß“ verdeckt das Gericht"
+ },
+ "sticky-date-chia-seed-pudding": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "sticky-toffee-pudding": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "suesskartoffel-mit-avocado-und-spiegelei": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "suesskartoffel-wrap-mit-fajita-haehnchensalat": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "supergreen-pasta": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "tamago-blumen-strauss": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "the-bear-omelette": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "tomaten-couscous-salat-mit-feta": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "ultra-cremige-zucchini-feta-pasta-mit-haehnchen": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "veganer-dueruem-mit-wuerzigem-raeucher-tofu": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "wassermelonen-rucola-salat": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "wassermelonen-sandwich-mit-brynza-und-rucola": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "wassermelonen-tacos": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "watermelon-jello": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "wikingertopf": {
+  "kategorie": "schrift",
+  "quelle": "original",
+  "grund": "große Schrift „Heute kocht er!“ über dem Gericht"
+ },
+ "zimt-zupfbrot": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "zitronen-haehnchen-salat": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "zucchini-ribbons-in-kraeutersalzlake": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ },
+ "zuckerfreie-apfel-fritters": {
+  "kategorie": "gericht",
+  "quelle": "original",
+  "grund": "Gericht erkennbar"
+ }
+}

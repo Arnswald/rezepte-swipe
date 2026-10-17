@@ -16,6 +16,7 @@ import matter from "gray-matter";
 import { readFileSync, readdirSync, existsSync } from "fs";
 import { join } from "path";
 import { env } from "@/lib/env";
+import kartenbildListe from "@/lib/kartenbild.json";
 
 /**
  * Pfad-Auflösung, zwei Varianten:
@@ -43,13 +44,16 @@ export interface Recipe {
   protein: number | null;
   carbs: number | null;
   fat: number | null;
-  /** Dateiname des Profilbilds, z.B. "chicken-nourish-bowl.jpg" */
+  /** Kartenbild: Dateiname des Bildes für Karte, Raster, Detail-Kopf und Teilen-Vorschau.
+   *  Meist das Profilbild, bei Standbildern ohne Gericht das KI-Bild (siehe `kartenbild`). */
   image: string | null;
+  /** true, wenn das Kartenbild ein KI-Bild ist (Dateiname endet auf _KI) */
+  imageIsAi: boolean;
   /** true wenn die Bilddatei tatsächlich existiert */
   imageExists: boolean;
-  /** Alle Bilder zum Rezept (Titelbild zuerst, dann _1, _2, _selbst … ) — für die Galerie */
+  /** Alle Bilder zum Rezept (Kartenbild zuerst, dann Profilbild, _1, _2, _selbst … ) — für die Galerie */
   images: string[];
-  /** Von Hand gesetzter Bildfokus des Titelbilds in Prozent [x, y] (Frontmatter `bildfokus`), sonst null */
+  /** Von Hand gesetzter Bildfokus des Kartenbilds in Prozent [x, y] (Frontmatter `bildfokus`), sonst null */
   imageFocus: [number, number] | null;
   created: string;
   source: string | null;
@@ -197,6 +201,26 @@ export function parseFocus(raw: unknown): [number, number] | null {
   return hit ? [x, y] : null;
 }
 
+// ── Kartenbild: Profilbild oder KI-Bild ──────────────────────
+// Viele Profilbilder sind Instagram-Standbilder, auf denen eine Person oder Schrift zu
+// sehen ist, aber kein Gericht. Gibt es zum Rezept ein passendes KI-Bild (<slug>_KI.jpg),
+// zeigt die Karte dann das KI-Bild; das Profilbild bleibt in der Galerie.
+// Die Einstufung aller Profilbilder liegt in `kartenbild.json` (von Hand am Kontaktbogen
+// geprüft, 17.10.2026): slug → { kategorie: gericht|person|schrift|unklar, quelle: ki|original, grund }.
+// Frontmatter `kartenbild: ki | original` übersteuert die Datei.
+
+type KartenbildEintrag = { kategorie: string; quelle: string; grund: string; kiPasst?: boolean };
+const KARTENBILD = kartenbildListe as Record<string, KartenbildEintrag>;
+
+export const isAiImage = (f: string) => /_ki\.(jpe?g|png|webp)$/i.test(f);
+
+/** Gewünschte Quelle des Kartenbilds: Frontmatter vor Datei, sonst Original. */
+export function kartenbildQuelle(slug: string, raw: unknown): "ki" | "original" {
+  const fm = raw == null ? "" : String(raw).toLowerCase().trim();
+  if (fm === "ki" || fm === "original") return fm;
+  return KARTENBILD[slug]?.quelle === "ki" ? "ki" : "original";
+}
+
 /**
  * Findet ALLE Bilder zu einem Rezept-Slug für die Galerie.
  * Reihenfolge: Titelbild zuerst, dann numerierte (_1, _2 …), dann selbst-Fotos,
@@ -336,13 +360,25 @@ export function parseRecipeFile(filePath: string, _imgDir: string | null): Recip
 
     // Tatsächlichen Dateinamen auflösen (kann in der Schreibweise abweichen)
     const declared = fm.Profilbild ? String(fm.Profilbild).trim() : null;
-    const image = declared ? resolveImageFile(declared) : null;
-    const imageExists = image !== null;
-    // Galerie: alle Bilder zum Slug, Titelbild garantiert an erster Stelle
-    const gallery = galleryImages(slug, image);
-    const images = image && !gallery.some((g) => g.toLowerCase() === image.toLowerCase())
-      ? [image, ...gallery]
+    const profile = declared ? resolveImageFile(declared) : null;
+    // Galerie: alle Bilder zum Slug, Profilbild garantiert an erster Stelle
+    const gallery = galleryImages(slug, profile);
+    let images = profile && !gallery.some((g) => g.toLowerCase() === profile.toLowerCase())
+      ? [profile, ...gallery]
       : gallery;
+    // Kartenbild: KI-Bild statt Profilbild, wenn so eingestuft (oder per Frontmatter) und vorhanden.
+    // Es rückt in der Galerie nach vorn (= Detail-Kopf), das Profilbild folgt direkt dahinter.
+    const aiFile = images.find(isAiImage) ?? null;
+    let image = profile;
+    if (aiFile && profile !== aiFile && kartenbildQuelle(slug, fm.kartenbild ?? fm.Kartenbild) === "ki") image = aiFile;
+    // Kartenbild immer vorn, damit Karte und Detail-Kopf dasselbe zeigen (auch wenn das
+    // Profilbild selbst ein _KI-Bild ist und galleryImages das Original davor sortiert)
+    // (Vergleich ohne Groß/Klein: auf macOS liefert resolveImageFile die Frontmatter-Schreibweise)
+    if (image && images[0]?.toLowerCase() !== image.toLowerCase()) {
+      const lower = image.toLowerCase();
+      images = [image, ...images.filter((f) => f.toLowerCase() !== lower)];
+    }
+    const imageExists = image !== null;
 
     const overview = parseOverview(content);
     const ingredients = parseIngredients(content);
@@ -367,6 +403,7 @@ export function parseRecipeFile(filePath: string, _imgDir: string | null): Recip
       carbs: toNumber(fm.kohlenhydrate),
       fat: toNumber(fm.fette),
       image,
+      imageIsAi: image ? isAiImage(image) : false,
       imageExists,
       images,
       imageFocus: image ? parseFocus(fm.bildfokus ?? fm.Bildfokus) : null,
