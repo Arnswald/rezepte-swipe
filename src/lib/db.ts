@@ -11,6 +11,7 @@ import { existsSync, mkdirSync } from "fs";
 import { join } from "path";
 import { randomUUID, scryptSync, randomBytes, timingSafeEqual } from "crypto";
 import { env } from "@/lib/env";
+import { dayKey, shiftDay } from "@/lib/day";
 
 export type Verdict = "like" | "nope" | "super";
 
@@ -140,9 +141,43 @@ function getDb(): Database.Database {
     );
     CREATE INDEX IF NOT EXISTS idx_cook_author  ON cook_events(author_guest);
     CREATE INDEX IF NOT EXISTS idx_cook_partner ON cook_events(partner_guest);
+
+    -- v10 „Heute gemerkt“: ein Eintrag je Gast, Gericht und Tag (Tag beginnt 4:00 Berlin,
+    -- siehe lib/day.ts). verdicts bleibt der Dauerstand für Matches/Gruppen/Trending.
+    CREATE TABLE IF NOT EXISTS swipe_days (
+      guest_id    TEXT NOT NULL,
+      slug        TEXT NOT NULL,
+      day         TEXT NOT NULL,   -- YYYY-MM-DD
+      verdict     TEXT NOT NULL,   -- like | nope | super
+      recipe_name TEXT NOT NULL DEFAULT '',
+      category    TEXT NOT NULL DEFAULT '',
+      swiped_at   TEXT NOT NULL,
+      PRIMARY KEY (guest_id, slug, day)
+    );
+    CREATE INDEX IF NOT EXISTS idx_swipe_days_guest_day ON swipe_days(guest_id, day);
   `);
+  migrate(database);
   globalForDb.rezepteDb = database;
   return database;
+}
+
+/**
+ * Einmalige Migrationen, gezählt über PRAGMA user_version.
+ * 1: Altbestand → swipe_days (je verdict-Zeile ein Eintrag am Tag von updated_at),
+ *    damit alte Likes als „1×“ zählen. verdicts bleibt unverändert.
+ */
+function migrate(db: Database.Database) {
+  const version = db.pragma("user_version", { simple: true }) as number;
+  if (version < 1) {
+    const rows = db.prepare(`SELECT guest_id, slug, verdict, recipe_name, category, updated_at FROM verdicts`).all() as
+      { guest_id: string; slug: string; verdict: string; recipe_name: string; category: string; updated_at: string }[];
+    const ins = db.prepare(`INSERT OR IGNORE INTO swipe_days (guest_id, slug, day, verdict, recipe_name, category, swiped_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`);
+    db.transaction(() => {
+      for (const r of rows) ins.run(r.guest_id, r.slug, dayKey(r.updated_at), r.verdict, r.recipe_name, r.category, r.updated_at);
+      db.pragma("user_version = 1");
+    })();
+  }
 }
 
 /** Setzt/aktualisiert ein Verdict (upsert). now = ISO-Timestamp (Route liefert ihn). */
@@ -156,6 +191,73 @@ export function upsertVerdict(v: {
       name = @name, recipe_name = @recipeName, category = @category,
       verdict = @verdict, updated_at = @now
   `).run(v);
+}
+
+/**
+ * Normaler Swipe: like/super setzen den Dauerstand, ein „Nö“ gilt nur für heute —
+ * es überschreibt kein früheres like/super (sonst verschwände der Favorit aus
+ * Matches und Gruppen), legt aber ein Nö an, wo noch nichts stand.
+ */
+export function applySwipeVerdict(v: {
+  guestId: string; name: string; slug: string; recipeName: string; category: string; verdict: Verdict; now: string;
+}) {
+  if (v.verdict !== "nope") { upsertVerdict(v); return; }
+  getDb().prepare(`
+    INSERT INTO verdicts (guest_id, name, slug, recipe_name, category, verdict, updated_at)
+    VALUES (@guestId, @name, @slug, @recipeName, @category, 'nope', @now)
+    ON CONFLICT(guest_id, slug) DO UPDATE SET name = @name, updated_at = @now
+      WHERE verdicts.verdict = 'nope'
+  `).run(v);
+}
+
+// ── v10: „Heute gemerkt“ (swipe_days) ─────────────────────────────────────────
+
+/** Setzt den Tageseintrag (verdict null = entfernen, z. B. Undo). */
+export function setSwipeDay(v: {
+  guestId: string; slug: string; day: string; verdict: Verdict | null; recipeName: string; category: string; swipedAt: string;
+}) {
+  const db = getDb();
+  if (v.verdict === null) {
+    db.prepare(`DELETE FROM swipe_days WHERE guest_id = ? AND slug = ? AND day = ?`).run(v.guestId, v.slug, v.day);
+    return;
+  }
+  db.prepare(`
+    INSERT INTO swipe_days (guest_id, slug, day, verdict, recipe_name, category, swiped_at)
+    VALUES (@guestId, @slug, @day, @verdict, @recipeName, @category, @swipedAt)
+    ON CONFLICT(guest_id, slug, day) DO UPDATE SET
+      verdict = @verdict, swiped_at = @swipedAt,
+      recipe_name = CASE WHEN @recipeName <> '' THEN @recipeName ELSE recipe_name END,
+      category = CASE WHEN @category <> '' THEN @category ELSE category END
+  `).run(v);
+}
+
+export interface SwipeDayEntry { v: Verdict; at: string }
+
+/**
+ * Stand für die App: die Tage im Fenster [from, to] einzeln ({ day: { slug: {v, at} } })
+ * und, für alles davor, je Gericht die Zahl der Tage mit like/super („oft gemocht“).
+ * Die App zählt die Tage im Fenster selbst dazu (dort kann sie lokal schon weiter sein).
+ */
+export function getSwipeDaysForGuest(guestId: string, from: string, to: string): {
+  days: Record<string, Record<string, SwipeDayEntry>>;
+  likeCountsBefore: Record<string, number>;
+} {
+  const db = getDb();
+  const rows = db.prepare(`SELECT slug, day, verdict, swiped_at FROM swipe_days WHERE guest_id = ? AND day >= ? AND day <= ?`)
+    .all(guestId, from, to) as { slug: string; day: string; verdict: Verdict; swiped_at: string }[];
+  const days: Record<string, Record<string, SwipeDayEntry>> = {};
+  for (const r of rows) (days[r.day] ??= {})[r.slug] = { v: r.verdict, at: r.swiped_at };
+  const counts = db.prepare(`SELECT slug, COUNT(*) AS n FROM swipe_days
+    WHERE guest_id = ? AND day < ? AND verdict IN ('like','super') GROUP BY slug`).all(guestId, from) as { slug: string; n: number }[];
+  const likeCountsBefore: Record<string, number> = {};
+  for (const c of counts) likeCountsBefore[c.slug] = c.n;
+  return { days, likeCountsBefore };
+}
+
+/** Fenster, das /api/me einzeln ausliefert: vorgestern bis morgen (Uhren-Toleranz). */
+export function swipeWindow(now = new Date()): { from: string; to: string; today: string } {
+  const today = dayKey(now);
+  return { from: shiftDay(today, -2), to: shiftDay(today, 1), today };
 }
 
 /** Entfernt ein Verdict (Undo). */
@@ -474,6 +576,7 @@ export function deleteGuestCascade(guestId: string): { verdicts: number; connect
     const connections = db.prepare(`DELETE FROM connections WHERE guest_a = ? OR guest_b = ?`).run(id, id).changes;
     db.prepare(`DELETE FROM group_members WHERE guest_id = ?`).run(id);
     db.prepare(`DELETE FROM evening_picks WHERE guest_id = ?`).run(id);
+    db.prepare(`DELETE FROM swipe_days WHERE guest_id = ?`).run(id);
     db.prepare(`DELETE FROM ratings WHERE guest_id = ?`).run(id);
     db.prepare(`DELETE FROM preferences WHERE guest_id = ?`).run(id);
     db.prepare(`DELETE FROM cook_events WHERE author_guest = ? OR partner_guest = ?`).run(id, id);

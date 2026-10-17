@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
-import { preload } from "react-dom";
+import { preload, createPortal } from "react-dom";
 import { motion, AnimatePresence, useReducedMotion, useMotionValue, useTransform, animate, useDragControls } from "framer-motion";
 import {
   Loader2, ChevronRight, ChevronDown, Clock, Users, Flame,
@@ -25,6 +25,7 @@ import { Lens } from "@/components/ui/Lens";
 import { AnimatedInput } from "@/components/ui/AnimatedInput";
 import { useToast } from "@/components/ui/Toast";
 import { ShareButton } from "@/components/ShareButton";
+import { dayKey, shiftDay, showYesterday } from "@/lib/day";
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -107,6 +108,40 @@ function replaceDislikes(list: string[]) {
   try { localStorage.setItem(DISLIKE_KEY, JSON.stringify(list)); } catch { /* ignore */ }
 }
 
+// „Heute gemerkt“: Tageseinträge je Gericht (Tag beginnt 4:00 Berlin, lib/day.ts).
+// Kopie des Server-Stands (swipe_days) plus eigene, noch nicht bestätigte Swipes.
+// before = je Gericht die Tage mit like/super VOR `from` (vom Server gezählt).
+const DAYS_KEY = "rezepte-heute-v1";
+type DayEntry = { v: Verdict; at: string };
+interface DayStore { from: string; days: Record<string, Record<string, DayEntry>>; before: Record<string, number> }
+const EMPTY_DAYS: DayStore = { from: "", days: {}, before: {} };
+function loadDayStore(): DayStore {
+  if (typeof window === "undefined") return EMPTY_DAYS;
+  try {
+    const v = JSON.parse(localStorage.getItem(DAYS_KEY) || "null");
+    return v && typeof v === "object" && v.days ? { from: v.from ?? "", days: v.days, before: v.before ?? {} } : EMPTY_DAYS;
+  } catch { return EMPTY_DAYS; }
+}
+function saveDayStore(st: DayStore) {
+  try { localStorage.setItem(DAYS_KEY, JSON.stringify(st)); } catch { /* ignore */ }
+}
+/** Tageseintrag setzen (null = entfernen), gibt den neuen Stand zurück. */
+function withDayEntry(st: DayStore, day: string, slug: string, e: DayEntry | null): DayStore {
+  const dayMap = { ...(st.days[day] ?? {}) };
+  if (e) dayMap[slug] = e; else delete dayMap[slug];
+  return { ...st, days: { ...st.days, [day]: dayMap } };
+}
+const isLike = (v?: Verdict | null) => v === "like" || v === "super";
+/** An wie vielen Tagen gemocht: Server-Zählung vor `from` + eigene Tage ab `from`. */
+function computeLikeCounts(st: DayStore): Record<string, number> {
+  const out: Record<string, number> = { ...st.before };
+  for (const [day, map] of Object.entries(st.days)) {
+    if (st.from && day < st.from) continue;
+    for (const [slug, e] of Object.entries(map)) if (isLike(e.v)) out[slug] = (out[slug] ?? 0) + 1;
+  }
+  return out;
+}
+
 // YYYY-MM-DD → TT.MM.JJJJ (für den Koch-Verlauf)
 function fmtDay(iso: string): string {
   const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
@@ -150,6 +185,8 @@ interface CookEvent {
 }
 // Verbundene Person (fürs „mit wem"-Dropdown)
 interface Friend { guestId: string; name: string }
+// Undo-Verlauf: Dauerstand davor + (Heute gemerkt) Tag und Tageseintrag davor
+interface HistoryItem { slug: string; prev: Verdict | null; day?: string; prevDay?: Verdict | null }
 
 // Verdict ans Backend schicken. Gibt die Antwort zurück (u.a. frische Matches);
 // bleibt aber unkritisch — die UI hängt nicht davon ab. Schlägt das Senden fehl
@@ -158,15 +195,22 @@ interface Friend { guestId: string; name: string }
 type VerdictBody = {
   guestId: string; name: string; slug: string;
   recipeName?: string; category?: string; verdict: Verdict | null;
+  day?: string; swipedAt?: string; undo?: boolean; dayVerdict?: Verdict | null;
 };
 const PENDING_KEY = "rezepte-pending-v1";
 function loadPending(): Record<string, VerdictBody> {
   try { const v = JSON.parse(localStorage.getItem(PENDING_KEY) || "{}"); return v && typeof v === "object" ? v : {}; } catch { return {}; }
 }
-function setPending(slug: string, body: VerdictBody | null) {
+// Schlüssel je Gericht UND Tag: ein offline gemerkter Swipe von gestern darf nicht
+// vom heutigen überschrieben werden.
+const pendingKey = (b: VerdictBody) => `${b.slug}|${b.day ?? ""}`;
+function pendingSlugs(): string[] {
+  return Object.values(loadPending()).map((b) => b.slug);
+}
+function setPending(key: string, body: VerdictBody | null) {
   try {
     const p = loadPending();
-    if (body) p[slug] = body; else delete p[slug];
+    if (body) p[key] = body; else delete p[key];
     localStorage.setItem(PENDING_KEY, JSON.stringify(p));
   } catch { /* ignore */ }
 }
@@ -179,16 +223,18 @@ async function postVerdict(body: VerdictBody): Promise<{ ok?: boolean; matches?:
       keepalive: true,
     });
     if (!res.ok) throw new Error(String(res.status));
-    setPending(body.slug, null);
+    setPending(pendingKey(body), null);
     return await res.json();
   } catch {
-    setPending(body.slug, body);
+    setPending(pendingKey(body), body);
     return null;
   }
 }
 // Liegengebliebene Swipes nachschicken (nur die des aktuellen Accounts).
 async function flushPending(guestId: string) {
   const all = Object.values(loadPending());
+  // Ältere App-Versionen merkten nur den Slug als Schlüssel → aufs neue Format umschlüsseln
+  try { localStorage.setItem(PENDING_KEY, JSON.stringify(Object.fromEntries(all.map((b) => [pendingKey(b), b])))); } catch { /* ignore */ }
   await Promise.all(all.filter((b) => b.guestId === guestId).map((b) => postVerdict(b)));
 }
 
@@ -352,7 +398,7 @@ function RecipeImage({
 // Grüne Info-Pill im Swipe-for-Dinner-Stil
 function InfoPill({ icon: Icon, children }: { icon?: React.ComponentType<{ className?: string }>; children: React.ReactNode }) {
   return (
-    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium bg-[#3f6b43]/10 text-[#3f6b43] dark:bg-[#8bbf90]/15 dark:text-[#9ecaa1] border border-[#3f6b43]/15">
+    <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-medium bg-[#3f6b43]/10 text-[#3f6b43] border border-[#3f6b43]/15">
       {Icon && <Icon className="w-3 h-3" />}
       {children}
     </span>
@@ -360,9 +406,13 @@ function InfoPill({ icon: Icon, children }: { icon?: React.ComponentType<{ class
 }
 
 function RecipeCardFace({
-  r, index, total, onOpen, onImageLoad,
+  r, index, total, onOpen, onImageLoad, likeCount = 0, likedToday = false,
 }: {
   r: Recipe; index: number; total: number; onOpen: () => void; animateMacros?: boolean; onImageLoad?: () => void;
+  /** an wie vielen Tagen schon gemocht (Badge ab 2) */
+  likeCount?: number;
+  /** heute schon nach rechts/hoch (nur bei „Nochmal alle ansehen“ im Stapel) */
+  likedToday?: boolean;
 }) {
   return (
     <div className="bg-surface rounded-[26px] shadow-[0_10px_30px_rgba(70,50,30,0.10)] border border-border p-3 sm:p-3.5 h-full flex flex-col">
@@ -381,6 +431,18 @@ function RecipeCardFace({
         className="relative block w-full flex-1 min-h-0 rounded-2xl overflow-hidden bg-surface-elevated"
       >
         <RecipeImage r={r} shape="card" sizes={CARD_SIZES} eager priority="high" onLoad={onImageLoad} className="absolute inset-0 w-full h-full object-cover pointer-events-none" />
+        {(likeCount >= 2 || likedToday) && (
+          <span className="absolute top-2 left-2 flex items-center gap-1.5 pointer-events-none">
+            {likeCount >= 2 && (
+              <span className="px-2 py-1 rounded-full bg-black/45 backdrop-blur-sm text-white text-[12px] font-semibold tabular-nums flex items-center gap-1">
+                <Heart className="w-3 h-3 fill-white" /> {likeCount}×
+              </span>
+            )}
+            {likedToday && (
+              <span className="px-2 py-1 rounded-full bg-[#3f6b43]/85 backdrop-blur-sm text-white text-[12px] font-semibold">Heute gemerkt</span>
+            )}
+          </span>
+        )}
         <span className="absolute bottom-2 right-2 px-2 py-1 rounded-full bg-black/45 backdrop-blur-sm text-white text-[10px] font-semibold flex items-center gap-0.5 pointer-events-none">
           Rezept <ChevronRight className="w-3 h-3" />
         </span>
@@ -408,7 +470,7 @@ function RecipeCardFace({
 // gestapelte Karten dahinter. Verdicts landen (vorerst) in localStorage.
 
 function SwipeDeck({
-  recipes, index, setIndex, onOpen, onVerdict, onUndo, canUndo,
+  recipes, index, setIndex, onOpen, onVerdict, onUndo, canUndo, likeCounts, todayMap,
 }: {
   recipes: Recipe[];
   index: number;
@@ -417,6 +479,8 @@ function SwipeDeck({
   onVerdict: (r: Recipe, v: Verdict) => void;
   onUndo: () => void;
   canUndo: boolean;
+  likeCounts?: Record<string, number>;
+  todayMap?: Record<string, DayEntry>;
 }) {
   const prefersReduced = useReducedMotion();
   const x = useMotionValue(0);
@@ -549,6 +613,8 @@ function SwipeDeck({
             onOpen={() => onOpen(current)}
             animateMacros={!prefersReduced}
             onImageLoad={() => setPrimed(true)}
+            likeCount={likeCounts?.[current.slug] ?? 0}
+            likedToday={isLike(todayMap?.[current.slug]?.v)}
           />
         </motion.div>
       </div>
@@ -612,36 +678,37 @@ function DeckSkeleton() {
   );
 }
 
-// ── Ende des Stapels ──────────────────────────────────────────
+// ── Ende des Stapels: für heute alles gesehen ─────────────────
 
-function DeckDone({
-  likeCount, superCount, onRestart, onShowFavs,
+function DayDone({
+  todayCount, again, onShowToday, onAgain,
 }: {
-  likeCount: number; superCount: number; onRestart: () => void; onShowFavs: () => void;
+  todayCount: number; again: boolean; onShowToday: () => void; onAgain: () => void;
 }) {
   return (
-    <div className="bg-surface border border-border rounded-2xl p-8 text-center space-y-4 mt-2">
+    <div className="bg-surface border border-border rounded-2xl p-7 text-center space-y-4 mt-2">
       <div className="text-5xl">🍽️</div>
       <div>
-        <h2 className="text-lg font-semibold text-text-primary">Durch den Stapel!</h2>
-        <p className="text-sm text-text-muted mt-1">
-          <span className="text-[#3f6b43] font-semibold">{likeCount}× lecker</span>
-          {" · "}
-          <span className="text-[#d99a2b] font-semibold">{superCount}× superlike</span>
+        <h2 className="text-lg font-semibold text-text-primary">{again ? "Nochmal durch, fertig!" : "Für heute alles gesehen"}</h2>
+        <p className="text-sm text-text-secondary mt-1.5 leading-relaxed">
+          {todayCount > 0
+            ? <>Heute gemerkt: <span className="text-[#3f6b43] font-semibold">{todayCount} {todayCount === 1 ? "Gericht" : "Gerichte"}</span>.</>
+            : "Heute hast du noch nichts gemerkt."}
+          <br />Morgen ab 4 Uhr ist der Stapel wieder voll.
         </p>
       </div>
       <div className="flex flex-col gap-2 max-w-xs mx-auto">
         <button
-          onClick={onShowFavs}
-          className="w-full py-3 rounded-xl bg-accent text-white text-sm font-semibold active:scale-[0.98] transition-transform"
+          onClick={onShowToday}
+          className="w-full min-h-12 py-3 rounded-xl bg-accent text-white text-sm font-semibold active:scale-[0.98] transition-transform"
         >
-          Meine Favoriten ansehen
+          Heute gemerkt ansehen
         </button>
         <button
-          onClick={onRestart}
-          className="w-full py-2.5 rounded-xl bg-surface-elevated border border-border text-text-secondary text-sm font-medium active:scale-[0.98] transition-transform"
+          onClick={onAgain}
+          className="w-full min-h-11 py-2.5 rounded-xl bg-surface-elevated border border-border text-text-secondary text-sm font-medium active:scale-[0.98] transition-transform"
         >
-          Nochmal von vorn
+          Nochmal alle ansehen
         </button>
       </div>
     </div>
@@ -649,13 +716,15 @@ function DeckDone({
 }
 
 // ── Bento-Grid-Modus ──────────────────────────────────────────
-// Rhythmisches Raster: jede 6er-Gruppe hat 1 grosse Hero-Kachel (2×2).
+// Rhythmisches Raster: jede 7er-Gruppe hat 1 grosse Hero-Kachel (2×2) + 6 kleine =
+// bei 2 Spalten genau 5 volle Reihen. Vorher alle 6 → je Block ein Loch.
+// grid-flow-dense füllt Reste (4 Spalten auf großen Bildschirmen).
 
 function RecipeGrid({ recipes, onOpen, verdicts, counts }: { recipes: Recipe[]; onOpen: (r: Recipe) => void; verdicts?: Record<string, Verdict>; counts?: TrendCounts }) {
-  const isHero = (i: number) => i % 6 === 0;
+  const isHero = (i: number) => i % 7 === 0;
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 auto-rows-[150px] sm:auto-rows-[180px] gap-3 pt-1">
+    <div className="grid grid-cols-2 lg:grid-cols-4 grid-flow-dense auto-rows-[150px] sm:auto-rows-[180px] gap-3 pt-1">
       {recipes.map((r, i) => {
         const hero = isHero(i);
         const c = counts?.[r.slug];
@@ -760,16 +829,16 @@ function GalleryHeader({ r }: { r: Recipe }) {
 // Sterne-Auswahl (1..5). Tippt man den aktuellen Wert erneut, wird er entfernt (null).
 function StarRating({ value, onChange, size = 30 }: { value: number; onChange: (n: number | null) => void; size?: number }) {
   return (
-    <div className="flex items-center gap-1.5">
+    <div className="flex items-center">
       {[1, 2, 3, 4, 5].map((n) => (
         <button
           key={n}
           onClick={() => onChange(value === n ? null : n)}
           aria-label={`${n} von 5 Sternen`}
-          className="p-0.5 active:scale-90 transition-transform"
+          className="w-11 h-11 flex items-center justify-center active:scale-90 transition-transform"
         >
           <Star
-            className={n <= value ? "text-[#d99a2b]" : "text-text-muted/50"}
+            className={n <= value ? "text-[#d99a2b]" : "text-text-faint"}
             style={{ width: size, height: size }}
             fill={n <= value ? "#d99a2b" : "none"}
           />
@@ -780,17 +849,17 @@ function StarRating({ value, onChange, size = 30 }: { value: number; onChange: (
 }
 
 // Aufklappbarer Abschnitt mit weicher Höhen-Animation (iOS-artig)
-function Collapsible({ title, icon: Icon, children, small = false }: {
-  title: string; icon?: React.ComponentType<{ className?: string }>; children: React.ReactNode; small?: boolean;
+function Collapsible({ title, icon: Icon, children, small = false, defaultOpen = false }: {
+  title: string; icon?: React.ComponentType<{ className?: string }>; children: React.ReactNode; small?: boolean; defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const prefersReduced = useReducedMotion();
   return (
     <div className={small ? "" : "bg-surface"}>
       <button
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
-        className={`w-full flex items-center gap-2 text-left active:opacity-60 transition-opacity ${small ? "py-1 text-xs text-text-muted" : "px-3.5 py-3 text-sm font-semibold text-text-primary"}`}
+        className={`w-full min-h-11 flex items-center gap-2 text-left active:opacity-60 transition-opacity ${small ? "py-1 text-[13px] text-text-muted" : "px-3.5 py-3 text-[15px] font-semibold text-text-primary"}`}
       >
         {Icon && <Icon className={small ? "w-3.5 h-3.5" : "w-4 h-4 text-accent"} />}
         <span className="flex-1">{title}</span>
@@ -815,6 +884,63 @@ function Collapsible({ title, icon: Icon, children, small = false }: {
   );
 }
 
+// ── Rückfrage vor destruktiven Aktionen (statt window.confirm) ──
+// Als Portal an <body>: in transformierten Sheets wäre `fixed` sonst am Sheet verankert.
+type ConfirmOpts = { title: string; text?: string; confirmLabel: string };
+type ConfirmState = ConfirmOpts & { resolve: (ok: boolean) => void };
+
+function ConfirmDialog({ state, onClose }: { state: ConfirmState | null; onClose: (ok: boolean) => void }) {
+  const prefersReduced = useReducedMotion();
+  if (typeof document === "undefined") return null;
+  return createPortal(
+    <AnimatePresence>
+      {state && (
+        <div className="fixed inset-0 z-[80] flex items-end sm:items-center justify-center" role="alertdialog" aria-modal="true" aria-label={state.title}>
+          <motion.div
+            initial={{ opacity: prefersReduced ? 1 : 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="absolute inset-0 bg-black/50" onClick={() => onClose(false)}
+          />
+          <motion.div
+            initial={{ y: prefersReduced ? 0 : 40, opacity: prefersReduced ? 1 : 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: prefersReduced ? 0 : 40, opacity: 0 }}
+            transition={prefersReduced ? { duration: 0 } : { type: "spring", damping: 30, stiffness: 340 }}
+            className="relative w-full sm:max-w-sm m-3 mb-[calc(env(safe-area-inset-bottom)+12px)] rounded-3xl bg-surface border border-border p-5 space-y-4"
+          >
+            <div>
+              <h3 className="text-[17px] font-bold text-text-primary">{state.title}</h3>
+              {state.text && <p className="text-[15px] text-text-secondary mt-1.5 leading-relaxed">{state.text}</p>}
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => onClose(false)} className="flex-1 min-h-12 rounded-xl bg-surface-elevated border border-border text-text-primary text-[15px] font-semibold active:scale-[0.98] transition-transform">
+                Abbrechen
+              </button>
+              <button onClick={() => onClose(true)} className="flex-1 min-h-12 rounded-xl bg-[#bd5138] text-white text-[15px] font-semibold active:scale-[0.98] transition-transform">
+                {state.confirmLabel}
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+    </AnimatePresence>,
+    document.body,
+  );
+}
+
+function useConfirm() {
+  const [state, setState] = useState<ConfirmState | null>(null);
+  const ask = useCallback((o: ConfirmOpts) => new Promise<boolean>((resolve) => setState({ ...o, resolve })), []);
+  const dialog = <ConfirmDialog state={state} onClose={(ok) => { state?.resolve(ok); setState(null); }} />;
+  return [ask, dialog] as const;
+}
+
+/** Portionen lesbar: „2“ → „2 Portionen“, Freitext bleibt. */
+function fmtPortions(p: string | null): string | null {
+  if (!p) return null;
+  const t = p.trim();
+  if (/^\d+([,.]\d+)?$/.test(t)) return `${t} ${t === "1" ? "Portion" : "Portionen"}`;
+  if (/^\d+\s*[–-]\s*\d+$/.test(t)) return `${t} Portionen`;
+  return t;
+}
+
 function RecipeDetail({
   r, onClose, rating = 0, onRate, dislikeHitList = [],
   friends = [], cookEntries = [], onAddCook, onDeleteCook,
@@ -830,6 +956,7 @@ function RecipeDetail({
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [cookPartner, setCookPartner] = useState("");
   const [cookDate, setCookDate] = useState(todayISO());
+  const [ask, confirmDialog] = useConfirm();
   const prefersReduced = useReducedMotion();
   // Wie ein iOS-Sheet: am Griff oben nach unten ziehen schließt
   const dragControls = useDragControls();
@@ -850,6 +977,7 @@ function RecipeDetail({
   const totalIngredients = r.ingredients.reduce((s, g) => s + g.items.length, 0);
   const checkedCount = checked.size;
   const isInstagram = r.source ? /instagram\.com/i.test(r.source) : false;
+  const portions = fmtPortions(r.portions);
 
   return (
     <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
@@ -886,9 +1014,9 @@ function RecipeDetail({
           <button
             onClick={onClose}
             aria-label="Schließen"
-            className="absolute top-3 right-3 w-9 h-9 rounded-full bg-black/60 backdrop-blur-sm text-white flex items-center justify-center active:scale-95 transition-transform"
+            className="absolute top-2.5 right-2.5 w-11 h-11 rounded-full bg-black/60 backdrop-blur-sm text-white flex items-center justify-center active:scale-95 transition-transform"
           >
-            <X className="w-4 h-4" />
+            <X className="w-5 h-5" />
           </button>
         </div>
         {/* Header — swipebare Bilder-Galerie */}
@@ -918,10 +1046,10 @@ function RecipeDetail({
           )}
         </AnimatePresence>
 
-        {/* Kompakt (Christian 09.10.): wer ein Gericht öffnet, will kochen. Oben Video-Link,
-            Eckdaten, Nährwerte, Zutaten. Zubereitung und Tipps stehen im Video, hier nur aufklappbar. */}
+        {/* Küchentauglich (Review 17.10.): Beschreibung ganz, Zeit + Portionen als ruhige Zeile
+            über den Zutaten, Schritte offen in 16 px, alles Antippbare mindestens 44 px. */}
         <div className="p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] space-y-4">
-          {r.description && <p className="text-[13px] text-text-secondary leading-snug line-clamp-2">{r.description}</p>}
+          {r.description && <p className="text-[15px] text-text-secondary leading-relaxed">{r.description}</p>}
 
           {/* Nährwerte + Video-Link in einer Zeile (Christian 09.10.: Zeit, Portionen, Level,
               Bewerten und Teilen gehören nicht nach oben) */}
@@ -932,18 +1060,26 @@ function RecipeDetail({
                 href={r.source}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="shrink-0 inline-flex items-center gap-1.5 pl-2.5 pr-3 py-1.5 rounded-full text-xs font-semibold active:scale-95 transition-transform text-white"
+                className="shrink-0 inline-flex items-center gap-1.5 min-h-11 pl-3.5 pr-4 rounded-full text-sm font-semibold active:scale-95 transition-transform text-white"
                 style={{ background: isInstagram ? "linear-gradient(120deg,#f09433,#e6683c 30%,#dc2743 60%,#cc2366 90%)" : "var(--text-secondary)" }}
               >
-                {isInstagram ? <InstagramIcon className="w-3.5 h-3.5" /> : <ExternalLink className="w-3.5 h-3.5" />}
+                {isInstagram ? <InstagramIcon className="w-4 h-4" /> : <ExternalLink className="w-4 h-4" />}
                 {isInstagram ? "Video" : "Quelle"}
               </a>
             )}
           </div>
           {dislikeHitList.length > 0 && (
-            <p className="text-[11px] text-[#bd5138] flex items-start gap-1.5">
+            <p className="text-[13px] text-[#bd5138] flex items-start gap-1.5">
               <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-px" />
               Enthält {dislikeHitList.join(", ")}, magst du laut deinem Account nicht.
+            </p>
+          )}
+
+          {/* Zeit + Portionen: eine ruhige Zeile, keine Pills */}
+          {(r.totalTime || portions) && (
+            <p className="flex items-center gap-x-4 gap-y-1 flex-wrap text-[15px] text-text-primary">
+              {r.totalTime && <span className="inline-flex items-center gap-1.5"><Clock className="w-4 h-4 text-text-muted" />{r.totalTime}</span>}
+              {portions && <span className="inline-flex items-center gap-1.5"><Users className="w-4 h-4 text-text-muted" />{portions}</span>}
             </p>
           )}
 
@@ -954,7 +1090,7 @@ function RecipeDetail({
               <div className="space-y-2">
                 {r.ingredients.map((g, gi) => (
                   <div key={gi}>
-                    {g.group && <p className="text-[11px] font-semibold text-text-secondary mt-1">{g.group}</p>}
+                    {g.group && <p className="text-[13px] font-semibold text-text-secondary mt-2">{g.group}</p>}
                     <div>
                       {g.items.map((item, ii) => {
                         const key = `${gi}-${ii}`;
@@ -963,16 +1099,16 @@ function RecipeDetail({
                           <button
                             key={key}
                             onClick={() => toggle(key)}
-                            className="w-full flex items-start gap-2.5 py-1.5 px-1 rounded-lg text-left active:bg-surface-elevated transition-colors"
+                            className="w-full min-h-11 flex items-start gap-3 py-2.5 px-1 rounded-lg text-left active:bg-surface-elevated transition-colors"
                           >
                             <motion.span
                               animate={{ scale: isChecked ? [1, 1.25, 1] : 1 }}
                               transition={{ duration: 0.25 }}
-                              className={`shrink-0 mt-0.5 w-4 h-4 rounded-full border flex items-center justify-center text-[10px] transition-colors ${isChecked ? "bg-accent border-accent text-white" : "border-border text-transparent"}`}
+                              className={`shrink-0 mt-0.5 w-5 h-5 rounded-full border-[1.5px] flex items-center justify-center text-[11px] transition-colors ${isChecked ? "bg-accent border-accent text-white" : "border-text-faint text-transparent"}`}
                             >
                               ✓
                             </motion.span>
-                            <span className={`text-sm transition-colors ${isChecked ? "text-text-muted line-through" : "text-text-primary"}`}>{item}</span>
+                            <span className={`text-base leading-snug transition-colors ${isChecked ? "text-text-muted line-through" : "text-text-primary"}`}>{item}</span>
                           </button>
                         );
                       })}
@@ -983,21 +1119,21 @@ function RecipeDetail({
             </div>
           )}
 
-          {/* Zubereitung + Tipps: zugeklappt */}
+          {/* Zubereitung offen, Tipps zugeklappt */}
           {r.lite && (
-            <div className="flex items-center gap-2 text-xs text-text-muted">
+            <div className="flex items-center gap-2 text-sm text-text-muted">
               <Loader2 className="w-3.5 h-3.5 animate-spin" /> Zubereitung lädt …
             </div>
           )}
           {(r.steps.length > 0 || r.tips.length > 0) && (
             <div className="rounded-xl border border-border divide-y divide-border overflow-hidden">
               {r.steps.length > 0 && (
-                <Collapsible title={`Zubereitung · ${r.steps.length} Schritte`} icon={ChefHat}>
-                  <ol className="space-y-2 pt-1">
+                <Collapsible title={`Zubereitung · ${r.steps.length} Schritte`} icon={ChefHat} defaultOpen>
+                  <ol className="space-y-3.5 pt-1">
                     {r.steps.map((st, i) => (
-                      <li key={i} className="flex gap-2.5">
-                        <span className="shrink-0 w-5 h-5 rounded-full bg-accent/15 text-accent text-[11px] font-bold flex items-center justify-center mt-px">{i + 1}</span>
-                        <p className="text-[13px] text-text-secondary leading-snug">{st}</p>
+                      <li key={i} className="flex gap-3">
+                        <span className="shrink-0 w-6 h-6 rounded-full bg-accent/15 text-accent text-[13px] font-bold flex items-center justify-center mt-0.5">{i + 1}</span>
+                        <p className="text-base text-text-primary leading-relaxed">{st}</p>
                       </li>
                     ))}
                   </ol>
@@ -1007,7 +1143,7 @@ function RecipeDetail({
                 <Collapsible title={`Tipps · ${r.tips.length}`} icon={Lightbulb}>
                   <ul className="space-y-1.5 pt-1">
                     {r.tips.map((t, i) => (
-                      <li key={i} className="text-xs text-text-muted leading-snug flex gap-2"><span className="text-accent">·</span>{t}</li>
+                      <li key={i} className="text-[15px] text-text-secondary leading-relaxed flex gap-2"><span className="text-accent">·</span>{t}</li>
                     ))}
                   </ul>
                 </Collapsible>
@@ -1018,9 +1154,9 @@ function RecipeDetail({
           {/* Ganz unten: Bewerten, Koch-Verlauf, Teilen */}
           <div className="pt-2 space-y-3 border-t border-border">
             {onRate && (
-              <div className="flex items-center justify-between pt-2">
-                <span className="text-xs text-text-muted">Deine Bewertung</span>
-                <StarRating value={rating} onChange={onRate} size={20} />
+              <div className="flex items-center justify-between gap-2 pt-1">
+                <span className="text-[13px] text-text-muted">Deine Bewertung</span>
+                <StarRating value={rating} onChange={onRate} size={28} />
               </div>
             )}
             {onAddCook && (
@@ -1031,28 +1167,34 @@ function RecipeDetail({
               >
                 <div className="space-y-2 pt-1">
                   {cookEntries.map((e) => (
-                    <div key={e.id} className="flex items-center gap-2 text-xs">
+                    <div key={e.id} className="flex items-center gap-2 text-sm">
                       <span className="text-text-secondary">{fmtDay(e.cookedOn)}{e.withName ? ` · mit ${e.withName}` : " · alleine"}</span>
                       {e.isAuthor && onDeleteCook && (
-                        <button onClick={() => onDeleteCook(e.id)} aria-label="Eintrag entfernen" className="ml-auto text-text-muted active:scale-90 transition-transform">
-                          <X className="w-3.5 h-3.5" />
+                        <button
+                          onClick={async () => {
+                            if (await ask({ title: "Eintrag löschen?", text: `Gekocht am ${fmtDay(e.cookedOn)}${e.withName ? ` mit ${e.withName}` : ""}.`, confirmLabel: "Löschen" })) onDeleteCook(e.id);
+                          }}
+                          aria-label="Eintrag entfernen"
+                          className="ml-auto -mr-2 w-11 h-11 flex items-center justify-center text-text-muted active:scale-90 transition-transform"
+                        >
+                          <X className="w-4 h-4" />
                         </button>
                       )}
                     </div>
                   ))}
-                  <div className="flex items-center gap-1.5">
-                    <div className="relative shrink-0">
-                      <select value={cookPartner} onChange={(e) => setCookPartner(e.target.value)}
-                        className="appearance-none min-w-[92px] text-xs bg-surface border border-border rounded-lg pl-2.5 pr-7 py-1.5 text-text-secondary">
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="relative">
+                      <select value={cookPartner} onChange={(e) => setCookPartner(e.target.value)} aria-label="Mit wem"
+                        className="appearance-none w-full h-11 text-[15px] bg-surface border border-border rounded-xl pl-3 pr-8 text-text-primary">
                         <option value="">Alleine</option>
                         {friends.map((f) => <option key={f.guestId} value={f.guestId}>mit {f.name}</option>)}
                       </select>
-                      <ChevronDown className="w-3.5 h-3.5 text-text-muted absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
+                      <ChevronDown className="w-4 h-4 text-text-muted absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                     </div>
-                    <input type="date" value={cookDate} max={todayISO()} onChange={(e) => setCookDate(e.target.value)}
-                      className="flex-1 min-w-0 text-xs bg-surface border border-border rounded-lg px-2 py-1.5 text-text-secondary" />
+                    <input type="date" value={cookDate} max={todayISO()} onChange={(e) => setCookDate(e.target.value)} aria-label="Datum"
+                      className="w-full min-w-0 h-11 text-[15px] bg-surface border border-border rounded-xl px-3 text-text-primary" />
                     <button onClick={() => onAddCook(cookPartner || null, cookDate || todayISO())}
-                      className="shrink-0 text-xs font-semibold text-white bg-accent px-3 py-1.5 rounded-lg active:scale-95 transition-transform">
+                      className="col-span-2 h-11 text-[15px] font-semibold text-white bg-accent rounded-xl active:scale-[0.98] transition-transform">
                       Eintragen
                     </button>
                   </div>
@@ -1063,11 +1205,12 @@ function RecipeDetail({
               slug={r.slug}
               name={r.name}
               label="Rezept teilen"
-              className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm text-text-secondary active:bg-surface-elevated transition-colors"
+              className="w-full min-h-11 flex items-center justify-center gap-2 py-2.5 rounded-xl text-[15px] text-text-secondary active:bg-surface-elevated transition-colors"
             />
           </div>
         </div>
       </motion.div>
+      {confirmDialog}
     </div>
   );
 }
@@ -1625,9 +1768,18 @@ interface MatchGroupUI { partner: Connection; recipes: MatchRecipeUI[] }
 interface GroupMatchUI { slug: string; recipeName: string; category: string; count: number; supers: number; memberCount: number; unanimous: boolean }
 interface GroupViewUI { id: string; name: string; code: string; members: { guestId: string; name: string }[]; memberCount: number; matches: GroupMatchUI[]; evening: { plan: GroupMatchUI[]; myPicks: number } }
 
+// Ein Eintrag in „Heute gemerkt“ / „Gestern“
+interface DayPick { slug: string; v: Verdict; at: string }
+
 function AccountView({
   guestId, guestName, recipes, verdicts, ratings, dislikes, cookEvents, onOpen, onSuggest, onLogout, onPlanEvening, onSaveDislikes, onConnections,
+  todayPicks, yesterdayPicks, yesterdayVisible, likeCounts, onGoSwipe,
 }: {
+  todayPicks: DayPick[];
+  yesterdayPicks: DayPick[];
+  yesterdayVisible: boolean;
+  likeCounts: Record<string, number>;
+  onGoSwipe: () => void;
   guestId: string;
   guestName: string;
   recipes: Recipe[];
@@ -1660,14 +1812,29 @@ function AccountView({
     return m;
   }, [recipes]);
 
-  const favs = useMemo(
-    () =>
-      Object.entries(verdicts)
-        .filter(([, v]) => v === "like" || v === "super")
-        .map(([slug, v]) => ({ r: bySlug.get(slug), v }))
-        .filter((x): x is { r: Recipe; v: Verdict } => !!x.r),
-    [verdicts, bySlug],
-  );
+  const [ask, confirmDialog] = useConfirm();
+  const [yesterdayOpen, setYesterdayOpen] = useState(true);
+
+  // „Insgesamt oft gemocht“: an wie vielen Tagen gemocht (absteigend). Wer einen Dauer-Favoriten
+  // ohne Tageseintrag hat (z. B. vor der Synchronisierung), zählt als 1×.
+  const favs = useMemo(() => {
+    const n = new Map<string, number>();
+    for (const [slug, c] of Object.entries(likeCounts)) if (c > 0) n.set(slug, c);
+    for (const [slug, v] of Object.entries(verdicts)) if (isLike(v) && !n.has(slug)) n.set(slug, 1);
+    return [...n.entries()]
+      .map(([slug, count]) => ({ r: bySlug.get(slug), v: verdicts[slug], count }))
+      .filter((x): x is { r: Recipe; v: Verdict; count: number } => !!x.r)
+      .sort((a, b) => b.count - a.count || Number(b.v === "super") - Number(a.v === "super") || a.r.name.localeCompare(b.r.name, "de"));
+  }, [likeCounts, verdicts, bySlug]);
+
+  const pickRecipes = (list: DayPick[]) =>
+    list.map((p) => ({ ...p, r: bySlug.get(p.slug) })).filter((x): x is DayPick & { r: Recipe } => !!x.r);
+  const today = pickRecipes(todayPicks);
+  const yesterday = pickRecipes(yesterdayPicks);
+  const fmtTime = (iso: string) => {
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Berlin" });
+  };
 
   // „Schon gekocht" — Gerichte mit Sterne-Bewertung ODER Koch-Verlauf, je Gericht
   // ein Eintrag: Sterne + zuletzt gekocht (Datum) + mit wem.
@@ -1775,8 +1942,15 @@ function AccountView({
     const d = await groupAction({ action: "join", code: c });
     if (d) { setJoinCode(""); toast.success("Beigetreten! 🎉", "Ab jetzt seht ihr eure Gruppen-Favoriten."); }
   };
-  const leaveGroup = async (groupId: string) => {
-    await groupAction({ action: "leave", groupId });
+  const leaveGroup = async (groupId: string, name: string, members: number) => {
+    const ok = await ask({
+      title: `Gruppe „${name}“ verlassen?`,
+      text: members <= 1
+        ? "Du bist das letzte Mitglied, die Gruppe wird damit gelöscht."
+        : "Deine Auswahl für heute Abend in dieser Gruppe wird gelöscht. Zurück kommst du nur mit dem Gruppencode.",
+      confirmLabel: "Verlassen",
+    });
+    if (ok) await groupAction({ action: "leave", groupId });
   };
   const copyGroupCode = async (c: string) => {
     try { await navigator.clipboard.writeText(c); toast.success("Kopiert", "Gruppencode in der Zwischenablage."); } catch { /* ignore */ }
@@ -1844,11 +2018,83 @@ function AccountView({
       {/* Begrüßung */}
       <div className="order-1">
         <h2 className="text-xl font-extrabold text-text-primary tracking-tight">Hey {guestName} 👋</h2>
-        <p className="text-sm text-text-muted mt-0.5">Dein Account, deine Matches und Favoriten.</p>
       </div>
 
+      {/* Heute gemerkt: alles, was heute nach rechts oder hoch ging (Superlikes zuerst) */}
+      <div className="order-2">
+        <h3 className="text-[15px] font-bold text-text-primary flex items-center gap-1.5 mb-2">
+          <Heart className="w-4 h-4 text-[#3f6b43] fill-[#3f6b43]" /> Heute gemerkt
+          {today.length > 0 && <span className="text-[13px] font-normal text-text-muted tabular-nums">({today.length})</span>}
+        </h3>
+        {today.length === 0 ? (
+          <div className="bg-surface border border-border rounded-2xl p-4">
+            <p className="text-[15px] text-text-secondary leading-relaxed">Heute noch nichts gemerkt. Wisch nach rechts, worauf du heute Lust hast.</p>
+            <button onClick={onGoSwipe} className="mt-3 w-full min-h-11 rounded-xl bg-accent text-white text-[15px] font-semibold active:scale-[0.98] transition-transform">
+              Zum Stapel
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-2.5">
+            {today.map(({ r, v, at }) => (
+              <button
+                key={r.slug}
+                onClick={() => onOpen(r)}
+                className="relative rounded-xl overflow-hidden aspect-[4/3] bg-surface-elevated text-left active:scale-[0.98] transition-transform"
+              >
+                <RecipeImage r={r} shape="wide" sizes="(min-width: 640px) 33vw, 50vw" className="absolute inset-0 w-full h-full object-cover" />
+                <div className="absolute inset-x-0 bottom-0 h-3/4 bg-gradient-to-t from-black/85 to-transparent" />
+                {v === "super" && (
+                  <span className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-[#d99a2b] flex items-center justify-center"><Star className="w-3.5 h-3.5 fill-white text-white" /></span>
+                )}
+                <div className="absolute inset-x-0 bottom-0 p-2">
+                  <p className="text-white text-[13px] font-semibold leading-tight line-clamp-2 drop-shadow">{r.name}</p>
+                  <p className="text-white/85 text-[12px] mt-0.5 flex items-center gap-1">
+                    {r.totalTime && <><Clock className="w-3 h-3" />{r.totalTime}</>}
+                    {r.totalTime && fmtTime(at) && <span className="opacity-60">·</span>}
+                    {fmtTime(at) && <span>{fmtTime(at)} Uhr</span>}
+                  </p>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Gestern: bis 12 Uhr sichtbar, einklappbar */}
+      {yesterdayVisible && yesterday.length > 0 && (
+        <div className="order-3">
+          <button
+            onClick={() => setYesterdayOpen((o) => !o)}
+            aria-expanded={yesterdayOpen}
+            className="w-full min-h-11 flex items-center gap-1.5 text-left"
+          >
+            <span className="text-[15px] font-bold text-text-primary">Gestern gemerkt</span>
+            <span className="text-[13px] text-text-muted tabular-nums">({yesterday.length})</span>
+            <ChevronDown className={`w-4 h-4 text-text-muted ml-auto transition-transform ${yesterdayOpen ? "rotate-180" : ""}`} />
+          </button>
+          {yesterdayOpen && (
+            <div className="space-y-1">
+              {yesterday.map(({ r, v }) => (
+                <button
+                  key={r.slug}
+                  onClick={() => onOpen(r)}
+                  className="w-full min-h-14 flex items-center gap-3 p-1.5 rounded-xl text-left active:bg-surface-elevated transition-colors"
+                >
+                  <div className="w-11 h-11 shrink-0 rounded-lg overflow-hidden bg-surface-elevated">
+                    <RecipeImage r={r} shape="square" sizes="48px" className="w-full h-full object-cover" />
+                  </div>
+                  <span className="flex-1 min-w-0 text-[15px] font-medium text-text-primary truncate">{r.name}</span>
+                  {v === "super" && <Star className="w-4 h-4 shrink-0 fill-[#d99a2b] text-[#d99a2b]" />}
+                  {r.totalTime && <span className="shrink-0 text-[13px] text-text-muted">{r.totalTime}</span>}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Freundescode */}
-      <div className="order-7 rounded-2xl border border-border bg-surface p-4">
+      <div className="order-10 rounded-2xl border border-border bg-surface p-4">
         <p className="text-xs font-semibold text-text-muted uppercase tracking-wide">Dein Freundescode</p>
         <div className="flex items-center gap-2 mt-2">
           <div className="flex-1 text-2xl font-extrabold tracking-[0.12em] text-accent tabular-nums select-all">
@@ -1876,7 +2122,7 @@ function AccountView({
       </div>
 
       {/* Verbinden */}
-      <div className="order-8 rounded-2xl border border-border bg-surface p-4">
+      <div className="order-11 rounded-2xl border border-border bg-surface p-4">
         <p className="text-xs font-semibold text-text-muted uppercase tracking-wide flex items-center gap-1.5">
           <UserPlus className="w-3.5 h-3.5" /> Mit jemandem verbinden
         </p>
@@ -1902,7 +2148,7 @@ function AccountView({
       </div>
 
       {/* Matches */}
-      <div className="order-2">
+      <div className="order-5">
         <h3 className="text-sm font-bold text-text-primary flex items-center gap-1.5 mb-2">
           <Heart className="w-4 h-4 text-accent fill-accent" /> Eure Matches
         </h3>
@@ -1953,7 +2199,7 @@ function AccountView({
       </div>
 
       {/* Gruppen */}
-      <div className="order-6">
+      <div className="order-9">
         <h3 className="text-sm font-bold text-text-primary flex items-center gap-1.5 mb-2">
           <Users className="w-4 h-4 text-accent" /> Gruppen
           {groups.length > 0 && <span className="text-[11px] font-normal text-text-muted tabular-nums">({groups.length})</span>}
@@ -1998,8 +2244,8 @@ function AccountView({
                   <button onClick={() => copyGroupCode(g.code)} className="shrink-0 text-[11px] font-mono font-semibold text-accent bg-accent/10 border border-accent/15 rounded-md px-1.5 py-0.5 active:scale-95 transition-transform">
                     {g.code}
                   </button>
-                  <button onClick={() => leaveGroup(g.id)} disabled={groupBusy} aria-label="Gruppe verlassen" className="shrink-0 text-text-muted hover:text-[#bd5138] p-1">
-                    <LogOut className="w-3.5 h-3.5" />
+                  <button onClick={() => leaveGroup(g.id, g.name, g.memberCount)} disabled={groupBusy} aria-label="Gruppe verlassen" className="shrink-0 -mr-2 w-11 h-11 flex items-center justify-center rounded-xl text-text-muted active:text-[#bd5138] active:bg-surface-elevated transition-colors">
+                    <LogOut className="w-4 h-4" />
                   </button>
                 </div>
                 <p className="text-[11px] text-text-muted mt-1 mb-2 truncate">
@@ -2081,20 +2327,20 @@ function AccountView({
         )}
       </div>
 
-      {/* Meine Favoriten */}
-      <div className="order-3">
-        <h3 className="text-sm font-bold text-text-primary flex items-center gap-1.5 mb-2">
-          <Star className="w-4 h-4 text-[#d99a2b] fill-[#d99a2b]" /> Meine Favoriten
-          {favs.length > 0 && <span className="text-[11px] font-normal text-text-muted tabular-nums">({favs.length})</span>}
+      {/* Insgesamt oft gemocht (ersetzt „Meine Favoriten“): an wie vielen Tagen gemocht */}
+      <div className="order-4">
+        <h3 className="text-[15px] font-bold text-text-primary flex items-center gap-1.5 mb-2">
+          <Star className="w-4 h-4 text-[#d99a2b] fill-[#d99a2b]" /> Insgesamt oft gemocht
+          {favs.length > 0 && <span className="text-[13px] font-normal text-text-muted tabular-nums">({favs.length})</span>}
         </h3>
         {favs.length === 0 ? (
-          <p className="text-sm text-text-muted bg-surface border border-border rounded-2xl p-4">
-            Noch nichts gemerkt. Wisch im Swipe-Tab nach rechts, was dir schmeckt.
+          <p className="text-[15px] text-text-secondary bg-surface border border-border rounded-2xl p-4">
+            Noch nichts gemocht. Was du an mehreren Tagen nach rechts wischst, landet hier ganz oben.
           </p>
         ) : (
           <>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-              {(favsExpanded ? favs : favs.slice(0, 10)).map(({ r, v }) => (
+              {(favsExpanded ? favs : favs.slice(0, 10)).map(({ r, v, count }) => (
                 <button
                   key={r.slug}
                   onClick={() => onOpen(r)}
@@ -2103,9 +2349,12 @@ function AccountView({
                   <RecipeImage r={r} shape="wide" sizes="(min-width: 640px) 33vw, 50vw" className="absolute inset-0 w-full h-full object-cover" />
                   <div className="absolute inset-x-0 bottom-0 h-3/5 bg-gradient-to-t from-black/85 to-transparent" />
                   {v === "super" && (
-                    <span className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-[#d99a2b] flex items-center justify-center"><Star className="w-3 h-3 fill-white text-white" /></span>
+                    <span className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-[#d99a2b] flex items-center justify-center"><Star className="w-3.5 h-3.5 fill-white text-white" /></span>
                   )}
-                  <p className="absolute inset-x-0 bottom-0 p-2 text-white text-[11px] font-semibold leading-tight line-clamp-2 drop-shadow">{r.name}</p>
+                  <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded-full bg-black/50 backdrop-blur-sm text-white text-[12px] font-semibold tabular-nums flex items-center gap-1">
+                    <Heart className="w-3 h-3 fill-white" /> {count}×
+                  </span>
+                  <p className="absolute inset-x-0 bottom-0 p-2 text-white text-[13px] font-semibold leading-tight line-clamp-2 drop-shadow">{r.name}</p>
                 </button>
               ))}
             </div>
@@ -2122,7 +2371,7 @@ function AccountView({
       </div>
 
       {/* Schon gekocht (Sterne + Koch-Verlauf) */}
-      <div className="order-4">
+      <div className="order-6">
         <h3 className="text-sm font-bold text-text-primary flex items-center gap-1.5 mb-2">
           <CookingPot className="w-4 h-4 text-accent" /> Schon gekocht
           {cooked.length > 0 && <span className="text-[11px] font-normal text-text-muted tabular-nums">({cooked.length})</span>}
@@ -2147,7 +2396,7 @@ function AccountView({
                   {stars > 0 && (
                     <div className="flex items-center gap-0.5 mt-0.5">
                       {[1, 2, 3, 4, 5].map((n) => (
-                        <Star key={n} className={`w-3.5 h-3.5 ${n <= stars ? "text-[#d99a2b]" : "text-text-muted/40"}`} fill={n <= stars ? "#d99a2b" : "none"} />
+                        <Star key={n} className={`w-3.5 h-3.5 ${n <= stars ? "text-[#d99a2b]" : "text-text-faint"}`} fill={n <= stars ? "#d99a2b" : "none"} />
                       ))}
                     </div>
                   )}
@@ -2164,7 +2413,7 @@ function AccountView({
       </div>
 
       {/* Was ich nicht mag (schlank) */}
-      <div className="order-9">
+      <div className="order-12">
         <h3 className="text-sm font-bold text-text-primary flex items-center gap-1.5 mb-1">
           <X className="w-4 h-4 text-[#bd5138]" /> Was ich nicht mag
         </h3>
@@ -2175,8 +2424,8 @@ function AccountView({
               {dislikes.map((d) => (
                 <span key={d} className="inline-flex items-center gap-1 pl-2.5 pr-1 py-1 rounded-full bg-[#bd5138]/10 text-[#bd5138] text-xs font-medium">
                   {d}
-                  <button onClick={() => removeDislike(d)} aria-label={`${d} entfernen`} className="w-4 h-4 rounded-full flex items-center justify-center active:scale-90 transition-transform">
-                    <X className="w-3 h-3" />
+                  <button onClick={() => removeDislike(d)} aria-label={`${d} entfernen`} className="-my-1 w-8 h-8 rounded-full flex items-center justify-center active:scale-90 transition-transform">
+                    <X className="w-3.5 h-3.5" />
                   </button>
                 </span>
               ))}
@@ -2188,7 +2437,7 @@ function AccountView({
               onChange={(e) => setDislikeInput(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addDislike(dislikeInput); } }}
               placeholder="z.B. Tomaten, Pilze …"
-              className="flex-1 min-w-0 bg-transparent text-sm text-text-primary placeholder:text-text-muted/60 outline-none py-1"
+              className="flex-1 min-w-0 bg-transparent text-sm text-text-primary placeholder:text-text-muted outline-none py-1"
             />
             {dislikeInput.trim() && (
               <button onClick={() => addDislike(dislikeInput)} className="shrink-0 text-xs font-semibold text-accent px-2 py-1 rounded-lg active:scale-95 transition-transform">
@@ -2202,18 +2451,21 @@ function AccountView({
       {/* Vorschlag */}
       <button
         onClick={onSuggest}
-        className="order-5 w-full py-3 rounded-xl bg-accent/10 border border-accent/25 text-accent text-sm font-semibold active:scale-[0.98] transition-transform"
+        className="order-7 w-full py-3 rounded-xl bg-accent/10 border border-accent/25 text-accent text-sm font-semibold active:scale-[0.98] transition-transform"
       >
         + Rezept einreichen
       </button>
 
       {/* Abmelden */}
       <button
-        onClick={onLogout}
-        className="order-10 w-full py-2.5 rounded-xl text-text-muted text-xs font-medium flex items-center justify-center gap-1.5 active:scale-[0.98] transition-transform"
+        onClick={async () => {
+          if (await ask({ title: "Abmelden?", text: "Mit Benutzername und Passwort kommst du jederzeit wieder rein, auch auf einem anderen Gerät.", confirmLabel: "Abmelden" })) onLogout();
+        }}
+        className="order-13 w-full min-h-11 py-2.5 rounded-xl text-text-muted text-sm font-medium flex items-center justify-center gap-1.5 active:scale-[0.98] transition-transform"
       >
-        <LogOut className="w-3.5 h-3.5" /> Abmelden
+        <LogOut className="w-4 h-4" /> Abmelden
       </button>
+      {confirmDialog}
     </div>
   );
 }
@@ -2243,13 +2495,18 @@ export default function RezeptePage() {
   const [friends, setFriends] = useState<Friend[]>([]);
   // Je Swipe der Slug und das Urteil davor — Undo stellt das vorherige wieder her
   // (nach „Nochmal von vorn“ sind schon bewertete Karten im Stapel).
-  const [history, setHistory] = useState<{ slug: string; prev: Verdict | null }[]>([]);
+  // Neu (Heute gemerkt): auch Tag und Tageseintrag davor.
+  const [history, setHistory] = useState<HistoryItem[]>([]);
   const [deckList, setDeckList] = useState<Recipe[]>([]);
   // Aus welcher Liste der Stapel zuletzt gebaut wurde. Weicht sie von `filtered` ab, ist
   // der Stapel noch nicht fertig (ein Render lang nach dem Laden) → Platzhalter statt
   // kurz „Alles durchgeswiped!“ und Layout-Sprung.
   const [deckSource, setDeckSource] = useState<Recipe[] | null>(null);
-  const [deckMode, setDeckMode] = useState<"new" | "all">("new"); // new = nur ungeswipte, all = alles außer „nö"
+  const [deckMode, setDeckMode] = useState<"new" | "all">("new"); // new = heute noch nicht bewertet, all = „Nochmal alle ansehen“
+  // „Heute gemerkt“: Tageseinträge (lokal + Server) und der aktuelle Tag (4:00 Berlin)
+  const [dayStore, setDayStore] = useState<DayStore>(EMPTY_DAYS);
+  const dayStoreRef = useRef<DayStore>(EMPTY_DAYS);
+  const [dayInfo, setDayInfo] = useState<{ today: string; yesterdayVisible: boolean }>({ today: "", yesterdayVisible: false });
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [guestName, setGuestName] = useState<string | null>(null);
   const [guestId, setGuestId] = useState<string>("");
@@ -2262,9 +2519,8 @@ export default function RezeptePage() {
   const dimTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [fullRecipes, setFullRecipes] = useState<Record<string, Recipe>>({});
   const pendingGroupDone = useRef(false);
-  const verdictsRef = useRef<Record<string, Verdict>>({});
   const filteredRef = useRef<Recipe[]>([]);
-  const savedDeckPos = useRef<{ index: number; history: { slug: string; prev: Verdict | null }[] } | null>(null); // Stapel-Position während Abend-Modus
+  const savedDeckPos = useRef<{ index: number; history: HistoryItem[] } | null>(null); // Stapel-Position während Abend-Modus
   const touchedRef = useRef(new Set<string>()); // in dieser Sitzung bewertete Slugs (für den /api/me-Merge)
   const startedRef = useRef(false); // true, sobald in dieser Deck-Runde geswipt wurde
   const profileRef = useRef<Record<string, number>>({});
@@ -2289,6 +2545,11 @@ export default function RezeptePage() {
     setVerdicts(loadVerdicts());
     setRatings(loadRatings());
     setDislikes(loadDislikes());
+    const ds = loadDayStore();
+    dayStoreRef.current = ds;
+    setDayStore(ds);
+    const now = new Date();
+    setDayInfo({ today: dayKey(now), yesterdayVisible: showYesterday(now) });
     try {
       const n = localStorage.getItem(NAME_KEY);
       const id = localStorage.getItem(ID_KEY);
@@ -2319,22 +2580,56 @@ export default function RezeptePage() {
         // Swipes, die während der Anfrage passiert sind, bleiben stehen (die Antwort
         // ist älter als sie), ebenso alles, was noch nicht beim Server ist.
         const merged: Record<string, Verdict> = { ...d.verdicts };
-        const keep = new Set([...touchedRef.current, ...Object.keys(loadPending())]);
+        const keep = new Set([...touchedRef.current, ...pendingSlugs()]);
         const local = loadVerdicts();
         for (const slug of keep) { if (local[slug]) merged[slug] = local[slug]; else delete merged[slug]; }
         setVerdicts(merged);
         replaceVerdicts(merged);
-        // Deck einmalig mit den Server-Bewertungen neu bauen — solange der User
+        // Tageseinträge: im Fenster gilt der Server, außer für eigene, noch nicht bestätigte Swipes.
+        let ds = dayStoreRef.current;
+        const sd = d.swipeDays as { from: string; to: string; days: Record<string, Record<string, DayEntry>>; likeCountsBefore: Record<string, number> } | undefined;
+        if (sd?.from && sd.to) {
+          const localDays = loadDayStore().days;
+          const days: DayStore["days"] = {};
+          for (const [day, map] of Object.entries(localDays)) if (day >= sd.from) days[day] = map; // älteres steckt in before
+          for (let day = sd.from; day <= sd.to; day = shiftDay(day, 1)) {
+            const m: Record<string, DayEntry> = { ...(sd.days?.[day] ?? {}) };
+            for (const slug of keep) { const e = localDays[day]?.[slug]; if (e) m[slug] = e; else delete m[slug]; }
+            days[day] = m;
+          }
+          ds = { from: sd.from, days, before: sd.likeCountsBefore ?? {} };
+          dayStoreRef.current = ds;
+          setDayStore(ds);
+          saveDayStore(ds);
+        }
+        // Deck einmalig mit dem Server-Stand neu bauen — solange der User
         // in dieser Runde noch nicht selbst geswipt hat (sonst nicht anfassen).
         if (!startedRef.current) {
-          setDeckList(orderDeck(filteredRef.current.filter((r) => !merged[r.slug])));
+          const todayMap = ds.days[dayKey(new Date())] ?? {};
+          setDeckList(orderDeck(filteredRef.current.filter((r) => !todayMap[r.slug])));
           setDeckMode("new");
           setIndex(0);
           setHistory([]);
         }
       })
       .catch(() => { /* offline egal */ });
-  }, [hydrated, guestId, guestName, orderDeck]);
+    // dayInfo.today: beim Tageswechsel (App offen) den Stand neu holen
+  }, [hydrated, guestId, guestName, orderDeck, dayInfo.today]);
+
+  // Tageswechsel um 4:00 bei offener App: beim Zurückkommen und jede Minute prüfen.
+  useEffect(() => {
+    if (!hydrated) return;
+    const check = () => {
+      const now = new Date();
+      const today = dayKey(now), yesterdayVisible = showYesterday(now);
+      setDayInfo((prev) => (prev.today === today && prev.yesterdayVisible === yesterdayVisible ? prev : { today, yesterdayVisible }));
+    };
+    const onVis = () => { if (document.visibilityState === "visible") check(); };
+    document.addEventListener("visibilitychange", onVis);
+    window.addEventListener("focus", check);
+    const iv = setInterval(check, 60_000);
+    return () => { document.removeEventListener("visibilitychange", onVis); window.removeEventListener("focus", check); clearInterval(iv); };
+  }, [hydrated]);
 
   // Gruppen-Einladungslink `/?gruppe=CODE`: nach Login automatisch der Gruppe beitreten.
   useEffect(() => {
@@ -2363,21 +2658,37 @@ export default function RezeptePage() {
 
   // Abmelden: lokale Identität + Cache löschen → Auth-Gate erscheint wieder.
   const logout = useCallback(() => {
-    try { localStorage.removeItem(NAME_KEY); localStorage.removeItem(ID_KEY); localStorage.removeItem(FAV_KEY); localStorage.removeItem(RATE_KEY); localStorage.removeItem(DISLIKE_KEY); } catch { /* ignore */ }
+    try { localStorage.removeItem(NAME_KEY); localStorage.removeItem(ID_KEY); localStorage.removeItem(FAV_KEY); localStorage.removeItem(RATE_KEY); localStorage.removeItem(DISLIKE_KEY); localStorage.removeItem(DAYS_KEY); } catch { /* ignore */ }
+    dayStoreRef.current = EMPTY_DAYS; setDayStore(EMPTY_DAYS);
     startedRef.current = false; touchedRef.current.clear(); savedDeckPos.current = null; setDeckList([]);
     setEveningGroup(null); setDetail(null); setMatch(null);
     setGuestName(null); setGuestId(""); setVerdicts({}); setRatings({}); setDislikes([]); setCookEvents([]); setFriends([]); setHistory([]); setIndex(0); setMode("swipe");
   }, []);
 
+  // Tageseintrag setzen/entfernen (State, Ref und localStorage gleichzeitig)
+  const putDayEntry = useCallback((day: string, slug: string, e: DayEntry | null) => {
+    const next = withDayEntry(dayStoreRef.current, day, slug, e);
+    dayStoreRef.current = next;
+    setDayStore(next);
+    saveDayStore(next);
+  }, []);
+
+  // Swipe: Tageseintrag für heute + Dauerstand. Ein „Nö“ gilt nur für heute und
+  // überschreibt keinen früheren Favoriten (Matches, Gruppen, Trending bleiben).
   const handleVerdict = useCallback((r: Recipe, v: Verdict) => {
     startedRef.current = true;
     touchedRef.current.add(r.slug);
+    const now = new Date();
+    const day = dayKey(now), at = now.toISOString();
     const before = verdicts[r.slug] ?? null;
-    saveVerdict(r.slug, v);
-    setVerdicts((prev) => ({ ...prev, [r.slug]: v }));
-    setHistory((prev) => [...prev, { slug: r.slug, prev: before }]);
+    const prevDay = dayStoreRef.current.days[day]?.[r.slug]?.v ?? null;
+    const next: Verdict = v === "nope" && isLike(before) ? (before as Verdict) : v;
+    saveVerdict(r.slug, next);
+    setVerdicts((prev) => ({ ...prev, [r.slug]: next }));
+    putDayEntry(day, r.slug, { v, at });
+    setHistory((prev) => [...prev, { slug: r.slug, prev: before, day, prevDay }]);
     if (guestId && guestName) {
-      postVerdict({ guestId, name: guestName, slug: r.slug, recipeName: r.name, category: r.category, verdict: v })
+      postVerdict({ guestId, name: guestName, slug: r.slug, recipeName: r.name, category: r.category, verdict: v, day, swipedAt: at })
         .then((res) => {
           // Rechts/Hoch auf ein Gericht, das ein:e Freund:in schon mag → Match-Animation
           if ((v === "like" || v === "super") && res?.matches?.length) {
@@ -2385,7 +2696,7 @@ export default function RezeptePage() {
           }
         });
     }
-  }, [guestId, guestName, verdicts]);
+  }, [guestId, guestName, verdicts, putDayEntry]);
 
   // Seiteneffekte bewusst außerhalb des setHistory-Updaters (der läuft im StrictMode doppelt).
   const handleUndo = useCallback(() => {
@@ -2395,12 +2706,26 @@ export default function RezeptePage() {
     touchedRef.current.add(last.slug);
     saveVerdict(last.slug, last.prev);
     setVerdicts((v) => { const n = { ...v }; if (last.prev) n[last.slug] = last.prev; else delete n[last.slug]; return n; });
+    if (last.day) putDayEntry(last.day, last.slug, last.prevDay ? { v: last.prevDay, at: new Date().toISOString() } : null);
     setIndex((i) => Math.max(0, i - 1));
-    if (guestId && guestName) postVerdict({ guestId, name: guestName, slug: last.slug, verdict: last.prev });
-  }, [history, guestId, guestName]);
+    if (guestId && guestName) {
+      postVerdict({ guestId, name: guestName, slug: last.slug, verdict: last.prev, undo: true, day: last.day, dayVerdict: last.prevDay ?? null });
+    }
+  }, [history, guestId, guestName, putDayEntry]);
 
-  const likeCount = Object.values(verdicts).filter((v) => v === "like").length;
-  const superCount = Object.values(verdicts).filter((v) => v === "super").length;
+  // „Heute gemerkt“ (Superlikes zuerst, dann neueste), „Gestern“ und die Tageszähler
+  const todayMap = useMemo(() => dayStore.days[dayInfo.today] ?? {}, [dayStore, dayInfo.today]);
+  const picksOf = useCallback((map: Record<string, DayEntry>): DayPick[] =>
+    Object.entries(map)
+      .filter(([, e]) => isLike(e.v))
+      .map(([slug, e]) => ({ slug, v: e.v, at: e.at }))
+      .sort((a, b) => Number(b.v === "super") - Number(a.v === "super") || b.at.localeCompare(a.at)), []);
+  const todayPicks = useMemo(() => picksOf(todayMap), [picksOf, todayMap]);
+  const yesterdayPicks = useMemo(
+    () => (dayInfo.today ? picksOf(dayStore.days[shiftDay(dayInfo.today, -1)] ?? {}) : []),
+    [picksOf, dayStore, dayInfo.today],
+  );
+  const likeCounts = useMemo(() => computeLikeCounts(dayStore), [dayStore]);
 
 
   // Sterne-Bewertung (nach dem Kochen). stars null = entfernen.
@@ -2502,29 +2827,30 @@ export default function RezeptePage() {
     return recipes.filter((r) => catGroup(r.category) === activeCat);
   }, [recipes, activeCat]);
 
-  // verdicts + filtered immer aktuell im Ref halten (für den Deck-Aufbau nach
+  // filtered immer aktuell im Ref halten (für den Deck-Aufbau nach
   // asynchroner Hydration, ohne Re-Render-Schleife)
-  useEffect(() => { verdictsRef.current = verdicts; }, [verdicts]);
   useEffect(() => { filteredRef.current = filtered; }, [filtered]);
 
   // ── Swipe-Stapel (Snapshot) ────────────────────────────────────────
-  // Der Deck zeigt nur Rezepte, die man NOCH NICHT geswipt hat. Einmal geswipt
-  // (egal ob lecker/nö/super) → raus aus dem Stapel. „Nö" bleibt dauerhaft weg,
-  // auch nach „Nochmal von vorn". Snapshot = stabile Reihenfolge beim Wischen.
+  // „Heute gemerkt“ (seit 18.10.2026): der Stapel zeigt ALLE Rezepte außer denen, die
+  // heute schon bewertet wurden (rechts, links oder hoch). „Nö“ gilt nur für heute —
+  // ab 4:00 Uhr am nächsten Tag ist alles wieder drin (dayInfo.today wechselt).
+  // Snapshot = stabile Reihenfolge beim Wischen.
   useEffect(() => {
-    const v = verdictsRef.current;
-    setDeckList(orderDeck(filtered.filter((r) => !v[r.slug])));
+    if (!dayInfo.today) return;
+    const todayMap = dayStoreRef.current.days[dayInfo.today] ?? {};
+    setDeckList(orderDeck(filtered.filter((r) => !todayMap[r.slug])));
     setDeckSource(filtered);
     setDeckMode("new");
     setIndex(0);
     setHistory([]);
     startedRef.current = false;
-  }, [filtered, orderDeck]);
+  }, [filtered, orderDeck, dayInfo.today]);
 
-  // „Nochmal von vorn": zeigt wieder alles AUSSER den abgelehnten Gerichten.
+  // „Nochmal alle ansehen“: alles, auch heute schon bewertete (Karte trägt dann „Heute gemerkt“).
+  // Rechts ändert nichts, links nimmt das Gericht aus „Heute gemerkt“ heraus.
   const resetDeck = useCallback(() => {
-    const v = verdictsRef.current;
-    setDeckList(orderDeck(filtered.filter((r) => v[r.slug] !== "nope")));
+    setDeckList(orderDeck(filtered));
     setDeckMode("all");
     setIndex(0);
     setHistory([]);
@@ -2673,22 +2999,12 @@ export default function RezeptePage() {
   const contentRef = useRef<HTMLDivElement>(null);
   useEffect(() => { contentRef.current?.scrollTo({ top: 0 }); }, [mode]);
 
-  // Höhe des schwebenden Kopfs messen (mit/ohne Kategorien), damit der Inhalt darunter beginnt
-  const headerRef = useRef<HTMLDivElement>(null);
-  const [headerH, setHeaderH] = useState(0);
-  useEffect(() => {
-    const el = headerRef.current;
-    if (!el) return;
-    const ro = new ResizeObserver(() => setHeaderH(el.offsetHeight));
-    ro.observe(el);
-    return () => ro.disconnect();
-  });
 
   // Vor allem anderen: Name abfragen (nach dem Lesen aus localStorage, um Flackern zu vermeiden)
   // Vor dem Hydrieren (Server-HTML) schon das Grundgerüst zeigen statt einer leeren Seite:
   // Titel + Platzhalter-Karte erscheinen mit dem HTML, nicht erst nach dem JavaScript.
   if (!hydrated) return (
-    <div className="relative mx-auto w-full max-w-3xl h-[100dvh] flex flex-col px-4 pb-[calc(env(safe-area-inset-bottom)+14px+64px+14px)]">
+    <div className="app-h relative mx-auto w-full max-w-3xl flex flex-col px-4 pb-[calc(env(safe-area-inset-bottom)+14px+64px+14px)]">
       <div className="shrink-0 pt-[calc(env(safe-area-inset-top)+0.75rem)]">
         <div className="flex items-end justify-between gap-3 pt-1 pb-1">
           <h1 className="text-[26px] font-extrabold tracking-tight leading-[1.1] text-text-primary">Entdecken</h1>
@@ -2714,20 +3030,26 @@ export default function RezeptePage() {
   const deckLayout = showDeck || (mode === "swipe" && (loading || deckPending));
   const scrollMode = !deckLayout;
 
-  return (
-    <div className={`relative mx-auto w-full max-w-3xl h-[100dvh] flex flex-col px-4 ${scrollMode ? "" : "pb-[calc(env(safe-area-inset-bottom)+14px+64px+14px)]"}`}>
-      <div
-        ref={headerRef}
-        className={scrollMode
-          ? "absolute inset-x-0 top-0 z-30 px-4 pb-4 pt-[calc(env(safe-area-inset-top)+0.75rem)] pointer-events-none [&>*]:pointer-events-auto"
-          : "shrink-0 pt-[calc(env(safe-area-inset-top)+0.75rem)]"}
-        style={scrollMode ? { background: "linear-gradient(to bottom, var(--bg) 0%, var(--bg) calc(100% - 1rem), color-mix(in srgb, var(--bg) 0%, transparent) 100%)" } : undefined}
-      >
+  // Kopf: großer Titel (+ „Heute N ♥“ im Stapel) und Kategorien. Im Stapel fest oben,
+  // in Raster/Profil scrollt er mit dem Inhalt weg (vorher schwebte er mit einem hohen
+  // Verlauf über dem Inhalt, der in Titel und Chips hineinragte). Oben bleibt nur ein
+  // schmaler Ausblender: Statusleiste + 14 px.
+  const header = (
+    <div className={scrollMode ? "pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-3" : "shrink-0 pt-[calc(env(safe-area-inset-top)+0.75rem)]"}>
       {/* Großer Titel wie in Outfits; die Bereiche wechselt die Glas-Leiste unten */}
       <div className="flex items-end justify-between gap-3 pt-1 pb-1">
         <h1 className="text-[26px] font-extrabold tracking-tight leading-[1.1] text-text-primary">
           {mode === "swipe" ? (eveningGroup ? "Heute Abend" : "Entdecken") : mode === "grid" ? "Alle Gerichte" : "Profil"}
         </h1>
+        {mode === "swipe" && !eveningGroup && (
+          <button
+            onClick={() => setMode("account")}
+            aria-label={`Heute ${todayPicks.length} gemerkt, ansehen`}
+            className="shrink-0 -my-1.5 min-h-11 px-3.5 rounded-full bg-surface border border-border text-[15px] font-semibold text-text-primary flex items-center gap-1.5 tabular-nums active:scale-95 transition-transform"
+          >
+            Heute <NumberFlow value={todayPicks.length} /> <Heart className="w-4 h-4 text-[#3f6b43] fill-[#3f6b43]" />
+          </button>
+        )}
       </div>
 
       {/* Kategorie-Filter — dezent, eine Reihe (nicht im Account, nicht im Abend-Modus) */}
@@ -2758,15 +3080,32 @@ export default function RezeptePage() {
           })}
         </div>
       )}
-      </div>
+    </div>
+  );
+
+  // Höhe: .app-h (globals.css) = 100dvh, in der Home-Bildschirm-App die feste Bildschirmhöhe.
+  // Leiste, Suche und Ausblender sind `absolute` in diesem Rahmen statt `fixed` — so hängen
+  // sie nicht an der Viewport-Höhe, die iOS 26 beim Start der App zu kurz meldet.
+  return (
+    <div className={`app-h relative mx-auto w-full max-w-3xl flex flex-col px-4 ${scrollMode ? "" : "pb-[calc(env(safe-area-inset-bottom)+14px+64px+14px)]"}`}>
+      {!scrollMode && header}
+
+      {/* Oben nur ein schmaler Ausblender unter der Statusleiste (Raster, Profil) */}
+      {scrollMode && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-x-0 top-0 z-30 h-[calc(env(safe-area-inset-top)+14px)]"
+          style={{ background: "linear-gradient(to bottom, var(--bg) 0%, var(--bg) calc(100% - 14px), color-mix(in srgb, var(--bg) 0%, transparent) 100%)" }}
+        />
+      )}
 
       {/* Inhalt */}
       <div
         ref={contentRef}
         onScroll={mode === "grid" ? onGridScroll : undefined}
         className={deckLayout ? "flex-1 min-h-0 flex flex-col mt-4" : "flex-1 min-h-0 overflow-y-auto overflow-x-hidden -mx-4 px-4 pb-[calc(env(safe-area-inset-bottom)+14px+64px+2rem)]"}
-        style={scrollMode ? { paddingTop: Math.max(headerH - 4, 0) } : undefined}
       >
+        {scrollMode && header}
         {loading || deckPending ? (
           mode === "swipe" ? <DeckSkeleton /> : (
             <div className="flex justify-center py-20">
@@ -2805,6 +3144,11 @@ export default function RezeptePage() {
             onPlanEvening={startEvening}
             onSaveDislikes={saveDislikes}
             onConnections={setFriends}
+            todayPicks={todayPicks}
+            yesterdayPicks={yesterdayPicks}
+            yesterdayVisible={dayInfo.yesterdayVisible}
+            likeCounts={likeCounts}
+            onGoSwipe={() => setMode("swipe")}
           />
         ) : mode === "swipe" ? (
           eveningGroup ? (
@@ -2846,50 +3190,26 @@ export default function RezeptePage() {
                 </div>
               )}
             </>
-          ) : deckList.length > 0 ? (
-            index < deckList.length ? (
-              <SwipeDeck
-                recipes={deckList}
-                index={index}
-                setIndex={setIndex}
-                onOpen={setDetail}
-                onVerdict={handleVerdict}
-                onUndo={handleUndo}
-                canUndo={history.length > 0}
-              />
-            ) : (
-              <DeckDone
-                likeCount={likeCount}
-                superCount={superCount}
-                onRestart={resetDeck}
-                onShowFavs={() => setMode("account")}
-              />
-            )
+          ) : deckList.length > 0 && index < deckList.length ? (
+            <SwipeDeck
+              recipes={deckList}
+              index={index}
+              setIndex={setIndex}
+              onOpen={setDetail}
+              onVerdict={handleVerdict}
+              onUndo={handleUndo}
+              canUndo={history.length > 0}
+              likeCounts={likeCounts}
+              todayMap={deckMode === "all" ? todayMap : undefined}
+            />
           ) : filtered.length > 0 ? (
-            // Alle Rezepte dieser Kategorie schon geswipt.
-            <div className="bg-surface border border-border rounded-2xl p-8 text-center space-y-4 mt-2">
-              <div className="text-5xl">🍽️</div>
-              <div>
-                <h2 className="text-lg font-semibold text-text-primary">
-                  {deckMode === "all" ? "Alles bewertet!" : "Alles durchgeswiped!"}
-                </h2>
-                <p className="text-sm text-text-muted mt-1">
-                  {deckMode === "all"
-                    ? "Du hast jedes Gericht hier bewertet. Deine Favoriten liegen im Account."
-                    : "Deine Favoriten liegen im Account. Nochmal ansehen? Abgelehnte bleiben ausgeblendet."}
-                </p>
-              </div>
-              <div className="flex flex-col gap-2 max-w-xs mx-auto">
-                {deckMode !== "all" && (
-                  <button onClick={resetDeck} className="w-full py-3 rounded-xl bg-accent text-white text-sm font-semibold active:scale-[0.98] transition-transform">
-                    Nochmal von vorn
-                  </button>
-                )}
-                <button onClick={() => setMode("account")} className="w-full py-2.5 rounded-xl bg-surface-elevated border border-border text-text-secondary text-sm font-medium active:scale-[0.98] transition-transform">
-                  Zu deinen Favoriten
-                </button>
-              </div>
-            </div>
+            // Für heute alles bewertet (oder „Nochmal alle ansehen“ durch)
+            <DayDone
+              todayCount={todayPicks.length}
+              again={deckMode === "all"}
+              onShowToday={() => setMode("account")}
+              onAgain={resetDeck}
+            />
           ) : (
             <p className="text-center text-sm text-text-muted py-12">
               Keine Rezepte in dieser Kategorie
@@ -2928,7 +3248,7 @@ export default function RezeptePage() {
       </div>
 
       {/* Glas-Leiste unten wie in Outfits (Liquid Glass, elastische Markierung) */}
-      <nav aria-label="Bereiche" className="fixed z-50 left-4 right-4 mx-auto max-w-md bottom-[calc(env(safe-area-inset-bottom)+14px)] h-16 rounded-full select-none">
+      <nav aria-label="Bereiche" className="absolute z-50 left-4 right-4 mx-auto max-w-md bottom-[calc(env(safe-area-inset-bottom)+14px)] h-16 rounded-full select-none">
         <div aria-hidden className="glas-flaeche absolute inset-0 rounded-full" />
         <div role="radiogroup" className="relative flex h-full p-1.5">
           {([
@@ -2967,14 +3287,14 @@ export default function RezeptePage() {
       {scrollMode && (
         <div
           aria-hidden
-          className="pointer-events-none fixed inset-x-0 bottom-0 z-20 h-[calc(env(safe-area-inset-bottom)+7rem)]"
+          className="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-[calc(env(safe-area-inset-bottom)+7rem)]"
           style={{ background: "linear-gradient(to top, var(--bg) 0%, var(--bg) 25%, color-mix(in srgb, var(--bg) 0%, transparent) 100%)" }}
         />
       )}
 
       {/* Schwebende Suche — nur im Raster, fadet beim Scrollen */}
       {mode === "grid" && recipes.length > 0 && (
-        <div className={`fixed left-1/2 -translate-x-1/2 bottom-[calc(env(safe-area-inset-bottom)+14px+64px+10px)] z-40 w-[min(92%,28rem)] transition-opacity duration-300 ${searchDimmed ? "opacity-40" : "opacity-100"}`}>
+        <div className={`absolute left-1/2 -translate-x-1/2 bottom-[calc(env(safe-area-inset-bottom)+14px+64px+10px)] z-40 w-[min(92%,28rem)] transition-opacity duration-300 ${searchDimmed ? "opacity-40" : "opacity-100"}`}>
           <div className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-surface/90 backdrop-blur-md border border-border shadow-lg">
             <Search className="w-4 h-4 text-text-muted shrink-0" />
             <input

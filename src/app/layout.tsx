@@ -38,6 +38,14 @@ export const metadata: Metadata = {
   },
 };
 
+const STANDALONE_SCRIPT = `(function(){try{
+var n=navigator,d=document.documentElement;
+if(!(n.standalone||matchMedia("(display-mode: standalone)").matches))return;
+var set=function(){var w=screen.width,h=screen.height;if(Math.min(w,h)>=500)return;
+var p=matchMedia("(orientation: portrait)").matches;d.style.setProperty("--screen-h",(p?Math.max(w,h):Math.min(w,h))+"px");d.classList.add("standalone");};
+set();addEventListener("orientationchange",set);addEventListener("resize",set);
+}catch(e){}})();`;
+
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
@@ -56,6 +64,11 @@ export default function RootLayout({
       className={`${geistSans.variable} ${outfit.variable} h-full antialiased`}
       suppressHydrationWarning
     >
+      <head>
+        {/* Home-Bildschirm-App auf dem iPhone: feste Bildschirmhöhe als --screen-h vorgeben, bevor
+            gerendert wird (iOS 26 meldet beim Start eine zu kurze Viewport-Höhe). Siehe .app-h in globals.css. */}
+        <script dangerouslySetInnerHTML={{ __html: STANDALONE_SCRIPT }} />
+      </head>
       <body className="min-h-full overflow-x-hidden">
         <ThemeProvider>
           <ToastProvider>{children}</ToastProvider>

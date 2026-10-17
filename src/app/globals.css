@@ -1,5 +1,9 @@
 @import "tailwindcss";
 
+/* Die App ist fest hell (ThemeProvider entfernt .dark). Ohne diese Zeile schaltet Tailwind v4
+ * `dark:` über prefers-color-scheme → im iPhone-Dunkelmodus hellgrüne Schrift auf Weiß (Review 17.10.). */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* ── Design Tokens: warmes "Swipe for Dinner"-Theme ───────────
  * Creme + Terrakotta + Waldgrün. Für die ganze App der Standard
  * (im Dashboard war das nur die scoped .rezepte-warm-Klasse). */
@@ -17,7 +21,10 @@
   /* Text */
   --text-primary: #2b2419;
   --text-secondary: #6d6151;
-  --text-muted: #a89a86;
+  /* #776854: 4,7 : 1 auf Creme, 5,6 : 1 auf Weiß (vorher #a89a86 mit 2,4 / 2,8 : 1) */
+  --text-muted: #776854;
+  /* nur Dekoratives (leere Sterne, Kreis-Ränder), kein Text */
+  --text-faint: #b3a693;
 
   /* Accent — Terrakotta (CTA, aktiver Filter) */
   --accent: #bd5138;
@@ -70,6 +77,7 @@
   --color-text-primary: var(--text-primary);
   --color-text-secondary: var(--text-secondary);
   --color-text-muted: var(--text-muted);
+  --color-text-faint: var(--text-faint);
   --color-accent: var(--accent);
   --color-accent-hover: var(--accent-hover);
   --color-accent-subtle: var(--accent-subtle);
@@ -84,6 +92,22 @@
 /* ── Base ────────────────────────────────────────────────────── */
 html, body {
   height: 100%;
+}
+
+/* App-Rahmen: im Browser die dynamische Viewport-Höhe. In der Home-Bildschirm-App (iOS 26)
+ * meldet WebKit beim Start eine um die Statusleiste zu kurze Viewport-Höhe, bis man einmal
+ * scrollt oder tippt → `fixed; bottom` und 100dvh endeten ~60 pt zu früh. Dort gibt das
+ * Inline-Skript in layout.tsx die feste Bildschirmhöhe als --screen-h vor (screen.height,
+ * kein Messen des Viewports), Leiste/Suche/Ausblender sitzen `absolute` in diesem Rahmen. */
+.app-h {
+  height: 100dvh;
+}
+/* Nur iPhone-Home-Bildschirm-App (Klasse + --screen-h aus dem Inline-Skript in layout.tsx).
+ * Liegt der Inhalt unter der Statusleiste (safe-area-inset-top > 0), ist die richtige Höhe
+ * die Bildschirmhöhe; das min() begrenzt auf dvh + 2 × Statusleiste. Ohne Statusleisten-
+ * Abstand (inset 0) bleibt es exakt bei 100dvh, also nie schlechter als vorher. */
+html.standalone .app-h {
+  height: max(100dvh, min(var(--screen-h, 100dvh), calc(100dvh + 2 * env(safe-area-inset-top))));
 }
 body {
   background: var(--bg);
