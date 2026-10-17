@@ -17,6 +17,14 @@ import { readFileSync, readdirSync, existsSync } from "fs";
 import { join } from "path";
 import { env } from "@/lib/env";
 import kartenbildListe from "@/lib/kartenbild.json";
+import { recipeStore, recipeImagesDir, type StoredRecipe } from "@/lib/recipeStore";
+
+/**
+ * Rezept-Quelle (seit 18.10.2026): `obsidian` liest den RO-Mount wie bisher, `db` die
+ * Rezept-Datenbank in DATA_DIR/rezepte.db (Bilder in DATA_DIR/bilder, gleiche Dateinamen).
+ * Umschalten per Stack-Env RECIPE_SOURCE, Rückweg = Variable zurück. Plan: docs/plan-datenbank.md
+ */
+export const RECIPE_SOURCE: "obsidian" | "db" = process.env.RECIPE_SOURCE === "db" ? "db" : "obsidian";
 
 /**
  * Pfad-Auflösung, zwei Varianten:
@@ -116,7 +124,7 @@ const TAG_LEXICON: { tag: string; patterns: string[] }[] = [
 const MEAT_TAGS = new Set(["hähnchen", "rind", "schwein", "fisch", "lamm"]);
 
 /** Leitet Tags aus Name + Beschreibung + Zutatentext ab. */
-function deriveTags(blob: string): string[] {
+export function deriveTags(blob: string): string[] {
   const b = " " + blob.toLowerCase() + " ";
   const tags = new Set<string>();
   for (const { tag, patterns } of TAG_LEXICON) {
@@ -139,7 +147,13 @@ export function recipesDir(): string | null {
   return v ? join(v, RECIPES_FOLDER) : null;
 }
 
+/** Bilder, die die App ausliefert: bei Quelle `db` DATA_DIR/bilder, sonst der Vault-Ordner. */
 export function imagesDir(): string | null {
+  return RECIPE_SOURCE === "db" ? recipeImagesDir() : obsidianImagesDir();
+}
+
+/** Bilder-Ordner im Vault (Mount), unabhängig von der Quelle: für Parser und Import. */
+export function obsidianImagesDir(): string | null {
   if (IMAGES_ABS) return IMAGES_ABS;
   const v = vaultPath();
   return v ? join(v, IMAGES_FOLDER) : null;
@@ -153,15 +167,14 @@ export function imagesDir(): string | null {
  * die Datei heisst aber `protein-pancakes.png`. Auf macOS egal, im Linux-Container
  * (case-sensitive) wäre das ein 404.
  */
-export function resolveImageFile(name: string): string | null {
-  const dir = imagesDir();
+export function resolveImageFile(name: string, dir: string | null = imagesDir()): string | null {
   if (!dir || !name) return null;
   // Schnellweg: exakter Treffer
   if (existsSync(join(dir, name))) return name;
-  // Fallback: case-insensitiver Scan
-  const lower = name.toLowerCase();
+  // Fallback: case-insensitiver Scan, Umlaute NFC (macOS liefert Dateinamen zerlegt)
+  const lower = name.normalize("NFC").toLowerCase();
   for (const f of listImageDir(dir) ?? []) {
-    if (f.toLowerCase() === lower) return f;
+    if (f.normalize("NFC").toLowerCase() === lower) return f;
   }
   return null;
 }
@@ -226,8 +239,7 @@ export function kartenbildQuelle(slug: string, raw: unknown): "ki" | "original" 
  * Reihenfolge: Titelbild zuerst, dann numerierte (_1, _2 …), dann selbst-Fotos,
  * KI-/Original-Varianten ans Ende. Case-insensitiv (Linux-Container).
  */
-export function galleryImages(slug: string, heroFile: string | null): string[] {
-  const dir = imagesDir();
+export function galleryImages(slug: string, heroFile: string | null, dir: string | null = imagesDir()): string[] {
   if (!dir) return heroFile ? [heroFile] : [];
   const files = listImageDir(dir);
   if (!files) return heroFile ? [heroFile] : [];
@@ -350,19 +362,32 @@ function parseTips(content: string): string[] {
 
 // ── Public API ────────────────────────────────────────────────
 
-export function parseRecipeFile(filePath: string, _imgDir: string | null): Recipe | null {
+export function parseRecipeFile(filePath: string, imgDir: string | null = obsidianImagesDir()): Recipe | null {
   try {
     const raw = readFileSync(filePath, "utf-8");
-    const { data: fm, content } = matter(raw);
-
     const fileName = filePath.split("/").pop() ?? "";
-    const slug = fileName.replace(/\.md$/, "");
+    return parseRecipeMarkdown(raw, fileName.replace(/\.md$/, ""), imgDir);
+  } catch (err) {
+    console.error(`[recipes] parse failed: ${filePath}`, err);
+    return null;
+  }
+}
+
+/**
+ * Kochbuch-Markdown (Frontmatter + Abschnitte) → Recipe. Auch für Rezepte, die n8n als
+ * Markdown an /api/admin/recipes/import schickt (gleicher Claude-Prompt wie früher für den
+ * Vault). imgDir = null: Bilder werden nicht aufgelöst (image/images leer). Wirft bei
+ * kaputtem YAML.
+ */
+export function parseRecipeMarkdown(raw: string, slug: string, imgDir: string | null): Recipe {
+  {
+    const { data: fm, content } = matter(raw);
 
     // Tatsächlichen Dateinamen auflösen (kann in der Schreibweise abweichen)
     const declared = fm.Profilbild ? String(fm.Profilbild).trim() : null;
-    const profile = declared ? resolveImageFile(declared) : null;
+    const profile = declared ? resolveImageFile(declared, imgDir) : null;
     // Galerie: alle Bilder zum Slug, Profilbild garantiert an erster Stelle
-    const gallery = galleryImages(slug, profile);
+    const gallery = galleryImages(slug, profile, imgDir);
     let images = profile && !gallery.some((g) => g.toLowerCase() === profile.toLowerCase())
       ? [profile, ...gallery]
       : gallery;
@@ -417,9 +442,6 @@ export function parseRecipeFile(filePath: string, _imgDir: string | null): Recip
       tips: parseTips(content),
       tags,
     };
-  } catch (err) {
-    console.error(`[recipes] parse failed: ${filePath}`, err);
-    return null;
   }
 }
 
@@ -447,13 +469,37 @@ export function focusOverrideFor(imageName: string): [number, number] | null {
   return focusOverrides?.get(imageName.toLowerCase()) ?? null;
 }
 
+/** Nach jedem Schreiben in die DB: nächste Anfrage liest frisch statt aus dem 20-s-Merker. */
+export function invalidateRecipeCache() {
+  scanCache = null;
+  focusOverrides = null;
+}
+
+/** DB-Zeile → genau der öffentliche Recipe-Typ (ohne id, Status, guestId der Einreichenden). */
+export function publicRecipe(r: StoredRecipe): Recipe {
+  return {
+    slug: r.slug, name: r.name, description: r.description, category: r.category,
+    kcal: r.kcal, protein: r.protein, carbs: r.carbs, fat: r.fat,
+    image: r.image, imageIsAi: r.imageIsAi, imageExists: r.imageExists, images: r.images,
+    imageFocus: r.imageFocus, created: r.created, source: r.source,
+    totalTime: r.totalTime, portions: r.portions, difficulty: r.difficulty,
+    ingredients: r.ingredients, steps: r.steps, tips: r.tips, tags: r.tags,
+  };
+}
+
 function scanRecipesUncached(): Recipe[] {
+  if (RECIPE_SOURCE === "db") return recipeStore().list().map(publicRecipe);
+  return scanObsidian();
+}
+
+/** Liest den Obsidian-Ordner direkt (Quelle `obsidian`, Parallelvergleich im Admin). */
+export function scanObsidian(): Recipe[] {
   const dir = recipesDir();
   if (!dir || !existsSync(dir)) {
     console.error(`[recipes] Ordner nicht gefunden: ${dir}`);
     return [];
   }
-  const imgDir = imagesDir();
+  const imgDir = obsidianImagesDir();
   const recipes: Recipe[] = [];
   for (const file of readdirSync(dir)) {
     if (!file.endsWith(".md")) continue;
@@ -488,11 +534,15 @@ export function sourceKey(u: string | null): string {
  * Detail-Seite `/rezept/[slug]`. Case-insensitiv, damit geteilte Links robust sind.
  */
 export function getRecipeBySlug(slug: string): Recipe | null {
+  if (RECIPE_SOURCE === "db") {
+    const r = recipeStore().get(slug);
+    return r ? publicRecipe(r) : null;
+  }
   const dir = recipesDir();
   if (!dir || !existsSync(dir) || !slug) return null;
   // Nur reine Dateinamen: kein „../“, keine Unterordner (Next dekodiert %2F im Param)
   if (/[\\/]/.test(slug) || slug.startsWith(".")) return null;
-  const imgDir = imagesDir();
+  const imgDir = obsidianImagesDir();
   const target = `${slug}.md`;
   // Schnellweg: exakter Dateiname
   if (existsSync(join(dir, target))) {
@@ -510,10 +560,22 @@ export function getRecipeBySlug(slug: string): Recipe | null {
 
 /** Diagnose: sind Rezept- und Bild-Ordner im Container erreichbar? */
 export function recipesDiagnostics() {
+  if (RECIPE_SOURCE === "db") {
+    const iDir = imagesDir();
+    return {
+      source: "db" as const,
+      recipesDir: null,
+      recipesDirExists: false,
+      imagesDir: iDir,
+      imagesDirExists: iDir ? existsSync(iDir) : false,
+      recipeCount: recipeStore().count("veroeffentlicht"),
+    };
+  }
   const v = vaultPath();
   const rDir = recipesDir();
   const iDir = imagesDir();
   return {
+    source: "obsidian" as const,
     vaultPath: v,
     recipesDir: rDir,
     recipesDirExists: rDir ? existsSync(rDir) : false,

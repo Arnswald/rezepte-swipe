@@ -16,6 +16,8 @@ export const env = {
   N8N_LINK_WEBHOOK: process.env.N8N_LINK_WEBHOOK,
   /** PIN für die Admin-Statistik (/admin). Ohne PIN ist die Admin-Seite gesperrt. */
   ADMIN_PIN: process.env.ADMIN_PIN,
+  /** Schlüssel für Maschinen (n8n, Mac-Runner): Header x-server-key. Ohne Schlüssel sind diese Wege zu. */
+  RECIPE_SERVER_KEY: process.env.RECIPE_SERVER_KEY,
   /** Öffentliche Basis-URL — für absolute OG-/Teilen-Links (WhatsApp-Vorschau). */
   SITE_URL: (process.env.SITE_URL ?? "https://rezepte.christianarns.de").replace(/\/$/, ""),
 };

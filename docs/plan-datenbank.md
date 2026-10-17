@@ -1,6 +1,14 @@
 # Rezepte aus der Datenbank statt aus Obsidian — Plan
 
-Stand 18.10.2026, Branch `datenbank-1018`. Grundlage gebaut, App liest noch aus Obsidian.
+Stand 18.10.2026: **gebaut und lokal geprüft** (Phase 1–3). Umschalten (Phase 4) über
+`RECIPE_SOURCE=db` im Stack. Offene Entscheidungen von Christian beantwortet: Server-Schlüssel ok,
+Kategorien wie gehabt (9 im Enum, 3 Gruppen in der App), eigene Telegram-Links direkt veröffentlichen
+(wenn die Prüfung ok ist), Formular-Einreichungen weiter von Claude aufbereiten lassen.
+
+**Abweichung vom Entwurf:** n8n schickt weiter das Kochbuch-Markdown (gleicher Claude-Prompt wie
+für den Vault), die App parst es mit `parseRecipeMarkdown()`. So bleibt der Prompt unverändert,
+und neue n8n-Workflows (10c, 14b) ersetzen nur das Ende. Gebaut von
+`n8n-automationen/werkzeuge/rezepte_auf_app_umstellen.py`.
 
 ## Entscheidungen (Christian, 18.10.2026)
 
@@ -128,3 +136,6 @@ Kleinste sinnvolle Lieferung: Phase 1 + Phase 4 Schritte 1–4 (≈ 5 h). Danach
 - **Lokales `main` war hinter `origin/main`** (90a7c41 Kartenbild fehlte). Vor dem Vergleich mit live immer `git fetch` und auf `origin/main` aufsetzen.
 - **Node lädt die TS-Module direkt** (Typ-Stripping ab 23.6), braucht aber den Alias-Hook `tools/ts-laden.mjs`; JSON-Importe ohne `with { type: "json" }` lädt der Hook als Modul.
 - **Platte voll:** Am 18.10.2026 waren auf dem Mac nur noch 149 MB frei, `npm ci` im Worktree brach mit ENOSPC ab. Worktrees deshalb mit Symlink auf das `node_modules` des Hauptrepos; Bilder werden per APFS-Klon kopiert (`COPYFILE_FICLONE`, kostet keinen Platz).
+- **iCloud lagert Rezepte aus:** Am 18.10.2026 waren 155 von 188 Rezeptdateien auf dem Mac nur „dataless“ (Platzmangel). `readFileSync` blockiert dann den ganzen Next-Prozess, bis iCloud lädt, und das kam aus der Sitzung nie. Prüfen mit `ls -lO | grep dataless`. Lokale Tests mit einer Teilmenge (nur lokal vorhandene Dateien), der echte Import läuft auf dem Server (Syncthing hat alles). Der Mac-Runner prüft vor dem Lesen per `stat -f %Sf` und überspringt ausgelagerte Dateien.
+- **Turbopack und verlinktes node_modules:** Im Worktree mit Symlink auf `../rezepte-swipe/node_modules` bricht `next dev` mit „Symlink … points out of the filesystem root“ ab. Lokal `next dev --webpack` nehmen; CI baut im echten Checkout und ist nicht betroffen.
+- **Link-Webhook fehlte im Stack:** `N8N_LINK_WEBHOOK` stand bis 18.10.2026 nicht im Rezepte-Stack, Links aus der App gingen nie an n8n. Und in WF10b/WF14 stand statt der Chat-ID der Platzhalter `DEINE_TELEGRAM_CHAT_ID`: Telegram-Hinweise zu App-Einreichungen kamen nie an. Beides mit dem Umbau behoben.

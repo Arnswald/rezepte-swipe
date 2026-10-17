@@ -1349,7 +1349,7 @@ function VoiceRecorder({ onAudioChange }: { onAudioChange: (blob: Blob | null) =
   );
 }
 
-function SuggestSheet({ onClose, defaultName }: { onClose: () => void; defaultName?: string }) {
+function SuggestSheet({ onClose, defaultName, guestId, onSubmitted }: { onClose: () => void; defaultName?: string; guestId?: string; onSubmitted?: () => void }) {
   const toast = useToast();
   const prefersReduced = useReducedMotion();
   const [submitter, setSubmitter] = useState(defaultName ?? "");
@@ -1392,6 +1392,7 @@ function SuggestSheet({ onClose, defaultName }: { onClose: () => void; defaultNa
     const fd = new FormData();
     fd.append("mode", mode);
     fd.append("submittedBy", submitter);
+    if (guestId) fd.append("guestId", guestId);
     if (imageFile) fd.append("image", imageFile);
 
     if (mode === "audio") {
@@ -1422,6 +1423,7 @@ function SuggestSheet({ onClose, defaultName }: { onClose: () => void; defaultNa
           : mode === "audio"
           ? "Deine Sprachnachricht ist unterwegs — Christian macht ein Rezept draus 🍽️"
           : "Dein Rezept ist bei Christian gelandet 🍽️");
+        onSubmitted?.();
         onClose();
       } else {
         toast.error("Hat nicht geklappt", (d.error as string) ?? "Versuch's gleich nochmal.");
@@ -1781,13 +1783,87 @@ interface MatchGroupUI { partner: Connection; recipes: MatchRecipeUI[] }
 interface GroupMatchUI { slug: string; recipeName: string; category: string; count: number; supers: number; memberCount: number; unanimous: boolean }
 interface GroupViewUI { id: string; name: string; code: string; members: { guestId: string; name: string }[]; memberCount: number; matches: GroupMatchUI[]; evening: { plan: GroupMatchUI[]; myPicks: number } }
 
+// ── Meine Einreichungen (Profil) ──────────────────────────────
+// Eigene Einreichungen mit Status. Solange eine ausgelesen wird, alle 15 s nachfragen.
+interface Submission {
+  slug: string;
+  status: "veroeffentlicht" | "eingereicht" | "abgelehnt";
+  phase: "auslesen" | "fertig" | "fehlgeschlagen";
+  grund: string | null;
+  erstelltAm: string;
+  recipe: Recipe | null;
+}
+
+function submissionLabel(s: Submission): { text: string; cls: string } {
+  if (s.status === "veroeffentlicht") return { text: "Im Kochbuch", cls: "bg-[#5a8a4f]/12 text-[#4b7a41]" };
+  if (s.status === "abgelehnt") return { text: "Nicht übernommen", cls: "bg-[#bd5138]/10 text-[#bd5138]" };
+  if (s.phase === "auslesen") return { text: "Wird ausgelesen …", cls: "bg-accent/10 text-accent" };
+  if (s.phase === "fehlgeschlagen") return { text: "Auslesen hat nicht geklappt", cls: "bg-[#bd5138]/10 text-[#bd5138]" };
+  return { text: "Wartet auf Freigabe", cls: "bg-[#d99a2b]/12 text-[#a8741a]" };
+}
+
+function MySubmissions({ guestId, tick, onOpen }: { guestId: string; tick: number; onOpen: (r: Recipe) => void }) {
+  const [items, setItems] = useState<Submission[]>([]);
+  useEffect(() => {
+    if (!guestId) return;
+    let stop = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const load = () => {
+      fetch("/api/einreichungen", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ guestId }) })
+        .then((r) => r.json())
+        .then((d) => {
+          if (stop || !Array.isArray(d.einreichungen)) return;
+          setItems(d.einreichungen);
+          if ((d.einreichungen as Submission[]).some((s) => s.status === "eingereicht" && s.phase === "auslesen")) timer = setTimeout(load, 15_000);
+        })
+        .catch(() => { /* offline egal */ });
+    };
+    load();
+    return () => { stop = true; if (timer) clearTimeout(timer); };
+  }, [guestId, tick]);
+
+  if (items.length === 0) return null;
+  return (
+    <div className="order-7 rounded-2xl border border-border bg-surface p-4">
+      <h3 className="text-sm font-bold text-text-primary mb-2.5">Meine Einreichungen</h3>
+      <ul className="space-y-2">
+        {items.map((s) => {
+          const l = submissionLabel(s);
+          const r = s.recipe;
+          const canOpen = !!r && s.phase !== "auslesen";
+          return (
+            <li key={s.slug}>
+              <button
+                onClick={() => canOpen && r && onOpen(r)}
+                disabled={!canOpen}
+                className="w-full min-h-11 flex items-center gap-3 text-left rounded-xl active:scale-[0.99] transition-transform disabled:active:scale-100"
+              >
+                <div className="w-11 h-11 shrink-0 rounded-lg overflow-hidden bg-surface-elevated">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  {r?.image && <img src={imageSrc(r.image, "square", 160, "webp", r.imageFocus)} alt="" className="w-full h-full object-cover" loading="lazy" />}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-text-primary truncate">{r?.name ?? "Rezept"}</p>
+                  <span className={`inline-block mt-0.5 px-2 py-0.5 rounded-full text-[11px] font-semibold ${l.cls}`}>{l.text}</span>
+                  {s.grund && <p className="text-[11px] text-text-muted mt-0.5 line-clamp-2">{s.grund}</p>}
+                </div>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
 // Ein Eintrag in „Heute gemerkt“ / „Gestern“
 interface DayPick { slug: string; v: Verdict; at: string }
 
 function AccountView({
   guestId, guestName, recipes, verdicts, ratings, dislikes, cookEvents, onOpen, onSuggest, onLogout, onPlanEvening, onSaveDislikes, onConnections,
-  todayPicks, yesterdayPicks, yesterdayVisible, likeCounts, onGoSwipe,
+  todayPicks, yesterdayPicks, yesterdayVisible, likeCounts, onGoSwipe, submitTick,
 }: {
+  submitTick: number;
   todayPicks: DayPick[];
   yesterdayPicks: DayPick[];
   yesterdayVisible: boolean;
@@ -2461,6 +2537,8 @@ function AccountView({
         </div>
       </div>
 
+      <MySubmissions guestId={guestId} tick={submitTick} onOpen={onOpen} />
+
       {/* Vorschlag */}
       <button
         onClick={onSuggest}
@@ -2523,6 +2601,8 @@ export default function RezeptePage() {
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [guestName, setGuestName] = useState<string | null>(null);
   const [guestId, setGuestId] = useState<string>("");
+  // Zählt Einreichungen hoch, damit „Meine Einreichungen“ im Profil neu lädt
+  const [submitTick, setSubmitTick] = useState(0);
   const [hydrated, setHydrated] = useState(false);
   const [counts, setCounts] = useState<TrendCounts>({});
   const [search, setSearch] = useState("");
@@ -3161,6 +3241,7 @@ export default function RezeptePage() {
             yesterdayPicks={yesterdayPicks}
             yesterdayVisible={dayInfo.yesterdayVisible}
             likeCounts={likeCounts}
+            submitTick={submitTick}
             onGoSwipe={() => setMode("swipe")}
           />
         ) : mode === "swipe" ? (
@@ -3345,7 +3426,7 @@ export default function RezeptePage() {
 
       {/* Vorschlag einreichen */}
       <AnimatePresence>
-        {suggestOpen && <SuggestSheet onClose={() => setSuggestOpen(false)} defaultName={guestName ?? ""} />}
+        {suggestOpen && <SuggestSheet onClose={() => setSuggestOpen(false)} defaultName={guestName ?? ""} guestId={guestId} onSubmitted={() => setSubmitTick((t) => t + 1)} />}
       </AnimatePresence>
 
       {/* Match-Animation */}

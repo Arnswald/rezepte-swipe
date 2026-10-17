@@ -38,6 +38,33 @@ gesetzt sein — siehe `DEPLOYMENT.md`.
 
 ## Architektur / Datenfluss
 
+**Seit 18.10.2026: Rezept-Datenbank.** Schalter `RECIPE_SOURCE` (`obsidian` | `db`). Mit `db`
+liest die App `DATA_DIR/rezepte.db` (Tabellen `recipes`, `recipe_images`) und die Bilder aus
+`DATA_DIR/bilder`; der Vault bekommt nur noch eine Kopie. Plan und Begründung:
+`docs/plan-datenbank.md`.
+
+```
+Einreichung (Gast: Link/Formular/Sprache)      Christian: Link per Telegram
+   POST /api/recipes/submit                       │
+     → Datensatz „eingereicht“ (lib/einreichung)  │
+     → n8n-Webhook (einreichung: <slug>)          │
+              ▼                                   ▼
+   n8n 10c (Link) / 14b (Formular, Sprache): auslesen, Claude → Kochbuch-Markdown
+              │  POST /api/admin/recipes/import  (x-server-key)
+              ▼
+   uebernehmen(): parsen, prüfen (lib/submission), Bild → DATA_DIR/bilder
+     Gast → „eingereicht“, Telegram mit Admin-Link · Christian → direkt „veröffentlicht“
+              │
+   /admin Einreichungen: Freigeben / Ablehnen (ein Tipp)
+              │
+   Mac-Runner (fokus-dashboard/tools/auftrags-runner/rezepte.mjs):
+     nachts /api/admin/backup → Drive Backups/Rezepte · alle 30 Min /api/admin/recipes/export
+     → Kopie nach 06 Research/Gerichte (nur `rezepte_app: true`-Dateien, Notizen bleiben)
+     · Brücke: import-obsidian holt Rezepte, die noch direkt im Vault landen
+```
+
+Bis 18.10.2026 (und mit `RECIPE_SOURCE=obsidian`):
+
 ```
 Obsidian-Vault (Christians Kochbuch)
   06 Research/Gerichte/*.md           ← Rezepte (Frontmatter + Sektionen)
@@ -113,6 +140,8 @@ mergen will: `kategorie:`-Frontmatter in `06 Research/Gerichte/*.md` ändern.
 | `SITE_URL` | Öffentliche Basis-URL für absolute OG-/Teilen-Links. Default: prod. | `https://rezepte.christianarns.de` |
 | `N8N_SUGGEST_WEBHOOK` | Optional: Vorschläge (Text/Sprache) an n8n posten (WF14) | — |
 | `N8N_LINK_WEBHOOK` | Optional: Link im „Quelle"-Feld → Scraping-Automation (WF10b) | `https://n8n.christianarns.de/webhook/rezept-link` |
+| `RECIPE_SOURCE` | `obsidian` (Default, liest den Mount) oder `db` (Rezept-Datenbank) | `db` |
+| `RECIPE_SERVER_KEY` | Schlüssel für n8n und Mac-Runner, Header `x-server-key`. Auf dem Mac: `~/.config/second-brain/rezepte-server.key`, in n8n: Header-Auth-Credential „Rezepte-App Server-Schlüssel“ | 64 Hex-Zeichen |
 | `TZ` | Zeitzone für Timestamps | `Europe/Berlin` |
 
 ## Deployment
@@ -279,7 +308,18 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
 | `src/lib/day.ts` | Tageslogik „Heute“: `dayKey` (Tag beginnt 4:00 Europe/Berlin), `shiftDay`, `showYesterday` (4–12 Uhr). Server und Browser |
 | `src/lib/db.ts` | better-sqlite3: `verdicts` + `swipe_days` (Tageseinträge, „Heute gemerkt“) + `guests`/`connections` + `groups`/`group_members` + `ratings` (Sterne) + `preferences` (Abneigungen) + `cook_events` (Koch-Verlauf, Autor+Partner+Datum), Codes/Matches/Trending/Gruppen-Ranking |
 | `src/lib/guard.ts` | Bremse gegen Durchprobieren (Fehlversuche je IP: Login 10/15 Min, Admin-PIN 5/30 Min, Freundes-/Gruppencode 15/15 Min) + `checkAdminPin` (zeitkonstant) für alle Admin-Routen |
-| `src/lib/env.ts` | Env-Zugriff (RECIPES-Pfade, DATA_DIR, ADMIN_PIN, SITE_URL, Webhook) |
+| `src/lib/env.ts` | Env-Zugriff (RECIPES-Pfade, DATA_DIR, ADMIN_PIN, SITE_URL, Webhook, RECIPE_SERVER_KEY) |
+| `src/lib/recipeStore.ts` | Rezept-Datenbank: Schema, Migration (`schema_versionen`), list/get/insert/update/setStatus/Bilder/rename |
+| `src/lib/obsidianImport.ts` | Übernahme aus dem Vault, idempotent (unverändert/in der App bearbeitet → bleibt) |
+| `src/lib/einreichung.ts` | Platzhalter anlegen, `uebernehmen()` (Markdown von n8n → prüfen → speichern → Bild), Bild laden/speichern |
+| `src/lib/submission.ts` | Plattform, Quelle-Schlüssel (Dubletten), Slug, Plausibilitätsprüfung, Telegram-Text |
+| `src/lib/recipeMarkdown.ts` | DB-Rezept → Kochbuch-Markdown (für die Vault-Kopie, Rundreise verlustfrei) |
+| `src/components/admin/Einreichungen.tsx` | Admin: offene/abgelehnte Einreichungen, Prüf-Ampel, Freigeben/Ablehnen |
+| `src/app/api/admin/recipes/import/route.ts` | POST (x-server-key): n8n liefert ein Rezept |
+| `src/app/api/admin/recipes/import-obsidian/route.ts` | POST: Vault → DB (Brücke, idempotent) |
+| `src/app/api/admin/recipes/route.ts` · `[slug]/route.ts` · `[slug]/status/route.ts` | Admin: Liste, Korrektur (PATCH), Freigeben/Ablehnen |
+| `src/app/api/admin/recipes/export/route.ts` · `admin/bild/[datei]` · `admin/backup` | Mac-Runner: Vault-Kopie, Originalbilder, DB-Sicherung |
+| `src/app/api/einreichungen/route.ts` | POST: eigene Einreichungen eines Gasts (Profil „Meine Einreichungen“) |
 | `src/app/api/auth/register/route.ts` | POST: Account anlegen (Benutzername+Passwort, übernimmt guestId) |
 | `src/app/api/auth/login/route.ts` | POST: Login → Identität + Server-Bewertungen |
 | `src/app/api/me/route.ts` | POST: Server-Stand (Verdicts, Sterne, Abneigungen, Freundescode, `swipeDays`) fürs Hydrieren |

@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { motion } from "framer-motion";
 import { Loader2, RefreshCw, LogOut, Heart, Star, X, ChevronDown, Lock, Trash2, Copy, Link2, Plus } from "lucide-react";
 import { AnimatedInput } from "@/components/ui/AnimatedInput";
+import { Einreichungen } from "@/components/admin/Einreichungen";
 
 // ── Types (Spiegel der Stats-API) ─────────────────────────────
 interface Recipe { slug: string; name: string; category: string; like: number; super: number; nope: number; score: number }
@@ -175,6 +176,8 @@ export default function AdminPage() {
           </button>
         </div>
       </div>
+
+      <Einreichungen pin={pin} />
 
       {stats && (
         <>

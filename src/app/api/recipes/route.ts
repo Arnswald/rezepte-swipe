@@ -3,6 +3,8 @@
  * GET /api/recipes?lite=1     → alle Rezepte OHNE Zubereitung/Tipps (Swipe-Liste)
  * GET /api/recipes?slug=x     → ein Rezept komplett (Detail-Sheet lädt nach)
  * GET /api/recipes?diag=1     → nur Diagnose (Pfad-Check, schnell)
+ * GET /api/recipes?quelle=db|obsidian  (x-admin-pin / x-server-key) → Liste aus genau dieser
+ *     Quelle, ungemerkt — für den Parallelvergleich beim Umschalten (tools/vergleich-live.mjs)
  *
  * Warum lite: Zubereitung + Tipps sind ~60 % der Liste (465 KB bei 188 Rezepten),
  * werden aber erst im Detail gebraucht. Zutaten bleiben drin (Empfehlungen +
@@ -11,7 +13,9 @@
 
 import { NextResponse } from "next/server";
 import { createHash } from "crypto";
-import { scanRecipes, recipesDiagnostics, getRecipeBySlug } from "@/lib/recipes";
+import { scanRecipes, scanObsidian, publicRecipe, recipesDiagnostics, getRecipeBySlug } from "@/lib/recipes";
+import { recipeStore } from "@/lib/recipeStore";
+import { checkAdminOrServer } from "@/lib/guard";
 
 export const dynamic = "force-dynamic";
 
@@ -30,8 +34,16 @@ export async function GET(req: Request) {
     return NextResponse.json({ recipe });
   }
 
+  const quelle = searchParams.get("quelle");
+  if (quelle === "db" || quelle === "obsidian") {
+    const bad = checkAdminOrServer(req);
+    if (bad) return bad;
+  }
+
   try {
-    const all = scanRecipes();
+    const all = quelle === "db" ? recipeStore().list().map(publicRecipe)
+      : quelle === "obsidian" ? scanObsidian()
+      : scanRecipes();
     const lite = searchParams.get("lite") === "1";
     const recipes = lite ? all.map(({ steps: _s, tips: _t, ...rest }) => ({ ...rest, lite: true })) : all;
     const categories = [...new Set(all.map((r) => r.category))].sort();

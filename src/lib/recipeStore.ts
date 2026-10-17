@@ -388,6 +388,10 @@ export interface RecipeStore {
   update(slug: string, patch: Partial<Omit<RecipeInput, "slug" | "status">>): StoredRecipe | null;
   setStatus(slug: string, status: RecipeStatus, opts?: { reason?: string | null; now?: string }): StoredRecipe | null;
   addImage(slug: string, image: ImageInput): ImageRow | null;
+  /** Ersetzt alle Bilder einer Rolle (z. B. neues Titelbild aus n8n). */
+  replaceImages(slug: string, rolle: ImageRole, image: ImageInput): ImageRow | null;
+  /** Slug ändern (Platzhalter-Slug einer Einreichung → Slug aus dem Titel). */
+  rename(slug: string, neu: string): boolean;
   images(recipeId: number): ImageRow[];
   findBySourceKey(key: string): RecipeRow[];
   /** Für die Dubletten-Prüfung: alle Namen außer abgelehnten. */
@@ -568,6 +572,20 @@ export function openRecipeStore(file?: string): RecipeStore {
       insertImage(row.id, image, next);
       db.prepare(`UPDATE recipes SET geaendert_am = ? WHERE id = ?`).run(image.now ?? new Date().toISOString(), row.id);
       return (db.prepare(`SELECT * FROM recipe_images WHERE recipe_id = ? AND datei = ?`).get(row.id, image.datei) as ImageRow) ?? null;
+    },
+
+    replaceImages(slug, rolle, image) {
+      const row = getRow(slug);
+      if (!row) return null;
+      db.prepare(`DELETE FROM recipe_images WHERE recipe_id = ? AND rolle = ?`).run(row.id, rolle);
+      return store.addImage(slug, { ...image, rolle });
+    },
+
+    rename(slug, neu) {
+      const row = getRow(slug);
+      if (!row || !neu || getRow(neu)) return false;
+      db.prepare(`UPDATE recipes SET slug = ?, geaendert_am = ? WHERE id = ?`).run(neu, new Date().toISOString(), row.id);
+      return true;
     },
 
     images,

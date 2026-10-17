@@ -10,6 +10,13 @@
  * WICHTIG: Die App schreibt NIE in den Vault (read-only). Das Einsortieren nach
  * Obsidian macht n8n auf dem Server. Diese Route fasst nur DATA_DIR an.
  *
+ * Mit RECIPE_SOURCE=db (seit 18.10.2026) legt die Route zusätzlich sofort einen Datensatz
+ * in der Rezept-Datenbank an (status „eingereicht“, der Gast sieht ihn im Profil):
+ *  - Link / Sprache: Platzhalter, n8n bekommt `einreichung: <slug>` und füllt ihn über
+ *    /api/admin/recipes/import
+ *  - Formular: gleich vollständig (uebernehmen), n8n bereitet mit Claude nach (Makros)
+ * Doppelte Quelle → 409 mit dem vorhandenen Rezept. Bremse: 10 Einreichungen/Stunde/Gerät.
+ *
  * Felder: name (Pflicht), description, category, ingredients, steps, tips,
  *         source, submittedBy, image (File, optional)
  */
@@ -19,6 +26,10 @@ import { env } from "@/lib/env";
 import { mkdir, writeFile } from "fs/promises";
 import { join } from "path";
 import sharp from "sharp";
+import { RECIPE_SOURCE } from "@/lib/recipes";
+import { recipeStore } from "@/lib/recipeStore";
+import { alsFehlgeschlagen, bildSpeichern, gleicheQuelle, platzhalterAnlegen, uebernehmen } from "@/lib/einreichung";
+import { clientIp } from "@/lib/guard";
 
 export const dynamic = "force-dynamic";
 
@@ -84,6 +95,17 @@ function buildMarkdown(r: {
   return `---\n${fm}\n---\n\n## 📋 Überblick\n\n| | |\n|---|---|\n| ⏳ Gesamtzeit |  |\n| 🍽️ Portionen |  |\n| 📊 Schwierigkeit |  |\n\n## 🛒 Zutaten\n\n${zutaten}\n\n## 👨‍🍳 Zubereitung\n\n${zubereitung}${tippsBlock}\n`;
 }
 
+// Bremse je Gerät (guestId) bzw. IP: 10 Einreichungen pro Stunde, im Speicher
+const einreichZaehler = new Map<string, number[]>();
+function zuViele(key: string): boolean {
+  const jetzt = Date.now();
+  const liste = (einreichZaehler.get(key) ?? []).filter((t) => jetzt - t < 3_600_000);
+  if (liste.length >= 10) return true;
+  liste.push(jetzt);
+  einreichZaehler.set(key, liste);
+  return false;
+}
+
 export async function POST(req: Request) {
   try {
     const form = await req.formData();
@@ -91,6 +113,11 @@ export async function POST(req: Request) {
 
     const mode = (get("mode") || "text").toLowerCase();
     const submittedBy = get("submittedBy").slice(0, 80) || "Anonym";
+    const guestId = get("guestId").slice(0, 64) || null;
+    const db = RECIPE_SOURCE === "db";
+    if (db && zuViele(guestId ?? clientIp(req))) {
+      return NextResponse.json({ error: "Das waren viele Rezepte auf einmal. Bitte in einer Stunde nochmal." }, { status: 429 });
+    }
 
     // ── Bild (beide Modi, optional) → WebP-Buffer ─────────────
     let imageBuf: Buffer | null = null;
@@ -134,15 +161,24 @@ export async function POST(req: Request) {
       if (imageBuf) await writeFile(join(dir, `${base}.webp`), imageBuf);
       await writeFile(join(dir, `${base}.txt`), `Sprach-Einreichung von ${submittedBy} · ${nowIso}\n`, "utf-8");
 
+      // DB: Platzhalter sofort, Foto gleich dazu
+      let einreichung: string | null = null;
+      if (db) {
+        einreichung = platzhalterAnlegen({ herkunft: "sprache", guestId, submittedName: submittedBy, name: providedName }).slug;
+        if (imageBuf) recipeStore().replaceImages(einreichung, "titel", await bildSpeichern(einreichung, imageBuf));
+      }
+
       let forwarded = false;
       if (env.N8N_SUGGEST_WEBHOOK) {
         try {
-          await fetch(env.N8N_SUGGEST_WEBHOOK, {
+          const hook = await fetch(env.N8N_SUGGEST_WEBHOOK, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               type: "recipe-submission",
               mode: "audio",
+              einreichung,
+              guestId,
               submittedBy,
               submittedAt: nowIso,
               recipe: { name: providedName },
@@ -150,12 +186,13 @@ export async function POST(req: Request) {
               image: imageBuf ? { filename: "bild.webp", mimetype: "image/webp", base64: imageBuf.toString("base64") } : null,
             }),
           });
-          forwarded = true;
+          forwarded = hook.ok;
         } catch (hookErr) {
           console.warn("[submit] n8n-Webhook (audio) fehlgeschlagen:", hookErr);
         }
       }
-      return NextResponse.json({ ok: true, mode: "audio", forwarded, hadImage: !!imageBuf });
+      if (einreichung && !forwarded) alsFehlgeschlagen(einreichung, "Sprachnachricht kam nicht bei der Automation an");
+      return NextResponse.json({ ok: true, mode: "audio", forwarded, hadImage: !!imageBuf, einreichung });
     }
 
     // ── Modus B: Text (Formular) ──────────────────────────────
@@ -173,12 +210,23 @@ export async function POST(req: Request) {
     const linkInSource = source.match(/https?:\/\/[^\s]+/i);
     if (linkInSource && env.N8N_LINK_WEBHOOK) {
       const url = linkInSource[0].replace(/[).,\]]+$/, "");
+      let einreichung: string | null = null;
+      if (db) {
+        const da = gleicheQuelle(url)[0];
+        if (da) {
+          return NextResponse.json({
+            error: da.status === "veroeffentlicht" ? `Das Rezept gibt es schon: „${da.name}“` : "Dieser Link wurde schon eingereicht und wartet auf Freigabe.",
+            schonDa: { slug: da.slug, name: da.name, status: da.status },
+          }, { status: 409 });
+        }
+        einreichung = platzhalterAnlegen({ herkunft: "link", url, guestId, submittedName: submittedBy, name }).slug;
+      }
       let forwarded = false;
       try {
         const hook = await fetch(env.N8N_LINK_WEBHOOK, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ type: "recipe-link", url, name, submittedBy, submittedAt: nowIso }),
+          body: JSON.stringify({ type: "recipe-link", url, name, submittedBy, submittedAt: nowIso, einreichung, guestId }),
         });
         forwarded = hook.ok;
         if (!hook.ok) console.warn("[submit] link-webhook antwortet", hook.status);
@@ -186,8 +234,11 @@ export async function POST(req: Request) {
         console.warn("[submit] link-webhook fehlgeschlagen:", hookErr);
       }
       // Ging der Link nicht raus, ehrlich sagen statt „Danke!“ — sonst ist er still verloren.
-      if (!forwarded) return NextResponse.json({ error: "Der Link konnte gerade nicht weitergegeben werden. Versuch es gleich nochmal." }, { status: 502 });
-      return NextResponse.json({ ok: true, mode: "link", url, forwarded });
+      if (!forwarded) {
+        if (einreichung) alsFehlgeschlagen(einreichung, "Link kam nicht bei der Automation an");
+        return NextResponse.json({ error: "Der Link konnte gerade nicht weitergegeben werden. Versuch es gleich nochmal." }, { status: 502 });
+      }
+      return NextResponse.json({ ok: true, mode: "link", url, forwarded, einreichung });
     }
 
     if (!name) return NextResponse.json({ error: "Bitte gib dem Rezept einen Namen." }, { status: 400 });
@@ -207,6 +258,28 @@ export async function POST(req: Request) {
     await writeFile(join(dir, `${base}.md`), markdown, "utf-8");
     if (image) await writeFile(join(dir, `${base}.webp`), image.buffer);
 
+    // DB: gleich vollständig anlegen; n8n bereitet danach mit Claude nach (gleiche einreichung)
+    let einreichung: string | null = null;
+    if (db) {
+      const zeilen = (t: string) => t.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+      const r = await uebernehmen({
+        herkunft: "formular",
+        eingereichtVon: guestId,
+        eingereichtName: submittedBy,
+        quelleUrl: source || null,
+        rezept: {
+          name, description, category,
+          ingredients: zeilen(ingredients),
+          steps: zeilen(steps).map((l) => l.replace(/^\d+[.)]\s*/, "")),
+          tips: zeilen(tips).map((l) => l.replace(/^[-*]\s*/, "")),
+        },
+        bild: imageBuf ? { base64: imageBuf.toString("base64") } : null,
+      });
+      if (r.status === 409) return NextResponse.json({ error: `Das Rezept gibt es schon: „${r.body.name}“` }, { status: 409 });
+      if (r.status !== 200) return NextResponse.json({ error: String(r.body.error ?? "Speichern fehlgeschlagen") }, { status: r.status });
+      einreichung = String(r.body.slug);
+    }
+
     let forwarded = false;
     if (env.N8N_SUGGEST_WEBHOOK) {
       try {
@@ -216,6 +289,8 @@ export async function POST(req: Request) {
           body: JSON.stringify({
             type: "recipe-submission",
             mode: "text",
+            einreichung,
+            guestId,
             submittedBy,
             submittedAt: nowIso,
             recipe: { name, slug, description, category, source, ingredients, steps, tips },
@@ -229,7 +304,7 @@ export async function POST(req: Request) {
       }
     }
 
-    return NextResponse.json({ ok: true, mode: "text", slug, forwarded, hadImage: !!image });
+    return NextResponse.json({ ok: true, mode: "text", slug: einreichung ?? slug, forwarded, hadImage: !!image, einreichung });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : String(err) },

@@ -57,3 +57,21 @@ export function checkAdminPin(req: Request): NextResponse | null {
   succeed(req, LIMITS.admin);
   return null;
 }
+
+/** Server-Schlüssel (n8n, Mac-Runner) prüfen: Header x-server-key gegen RECIPE_SERVER_KEY. null = ok. */
+export function checkServerKey(req: Request): NextResponse | null {
+  if (!env.RECIPE_SERVER_KEY) return NextResponse.json({ error: "Server-Schlüssel nicht konfiguriert (RECIPE_SERVER_KEY fehlt)" }, { status: 503 });
+  const stop = blocked(req, LIMITS.admin);
+  if (stop) return stop;
+  const h = (s: string) => createHash("sha256").update(s).digest();
+  if (!timingSafeEqual(h(req.headers.get("x-server-key") ?? ""), h(env.RECIPE_SERVER_KEY))) {
+    fail(req, LIMITS.admin);
+    return NextResponse.json({ error: "Falscher Server-Schlüssel" }, { status: 401 });
+  }
+  return null;
+}
+
+/** Admin-Wege, die Christian (PIN) und Maschinen (Server-Schlüssel) gleichermaßen nutzen. */
+export function checkAdminOrServer(req: Request): NextResponse | null {
+  return req.headers.get("x-server-key") ? checkServerKey(req) : checkAdminPin(req);
+}

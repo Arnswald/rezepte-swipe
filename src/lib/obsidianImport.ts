@@ -26,7 +26,7 @@ import { join } from "path";
 import { createHash } from "crypto";
 import sharp from "sharp";
 import matter from "gray-matter";
-import { parseRecipeFile, sourceKey, recipesDir, imagesDir, resolveImageFile, type Recipe } from "@/lib/recipes";
+import { parseRecipeFile, sourceKey, recipesDir, obsidianImagesDir, resolveImageFile, type Recipe } from "@/lib/recipes";
 import { openRecipeStore, type ImageInput, type ImageRole, type RecipeStore } from "@/lib/recipeStore";
 import { erkennePlattform, quelleKey } from "@/lib/submission";
 
@@ -124,7 +124,7 @@ export async function importiereObsidian(opts: ImportOptions): Promise<ImportBer
   const t0 = Date.now();
   const log = opts.log ?? (() => {});
   const rDir = recipesDir();
-  const iDir = imagesDir();
+  const iDir = obsidianImagesDir();
   if (!rDir || !existsSync(rDir)) throw new Error(`Rezept-Ordner nicht gefunden: ${rDir}`);
   if (!iDir || !existsSync(iDir)) throw new Error(`Bilder-Ordner nicht gefunden: ${iDir}`);
 
@@ -237,7 +237,7 @@ export async function importiereObsidian(opts: ImportOptions): Promise<ImportBer
         // Profilbild (rolle titel) = Frontmatter `Profilbild`. r.image ist seit 17.10.2026 das
         // Kartenbild (bei Standbildern ohne Gericht das KI-Bild, siehe kartenbild.json).
         const declared = matter(raw).data.Profilbild;
-        const profil = declared ? resolveImageFile(String(declared).trim()) : null;
+        const profil = declared ? resolveImageFile(String(declared).trim(), iDir) : null;
         const kartenbild = r.image && (!profil || bildKey(r.image) !== bildKey(profil)) ? r.image.normalize("NFC") : null;
 
         const wie = dublette.get(r.slug);
