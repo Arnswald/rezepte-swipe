@@ -49,6 +49,8 @@ export interface Recipe {
   imageExists: boolean;
   /** Alle Bilder zum Rezept (Titelbild zuerst, dann _1, _2, _selbst … ) — für die Galerie */
   images: string[];
+  /** Von Hand gesetzter Bildfokus des Titelbilds in Prozent [x, y] (Frontmatter `bildfokus`), sonst null */
+  imageFocus: [number, number] | null;
   created: string;
   source: string | null;
   /** Aus der Überblick-Tabelle */
@@ -153,13 +155,46 @@ export function resolveImageFile(name: string): string | null {
   // Schnellweg: exakter Treffer
   if (existsSync(join(dir, name))) return name;
   // Fallback: case-insensitiver Scan
-  try {
-    const lower = name.toLowerCase();
-    for (const f of readdirSync(dir)) {
-      if (f.toLowerCase() === lower) return f;
-    }
-  } catch { /* Ordner nicht lesbar */ }
+  const lower = name.toLowerCase();
+  for (const f of listImageDir(dir) ?? []) {
+    if (f.toLowerCase() === lower) return f;
+  }
   return null;
+}
+
+/** Inhalt des Bilder-Ordners, 10 s gemerkt. Vorher las jedes Rezept beim Scannen
+ *  den ganzen Ordner neu ein (≈190 × readdir mit ~300 Dateien pro Anfrage). */
+let dirCache: { dir: string; at: number; files: string[] } | null = null;
+function listImageDir(dir: string): string[] | null {
+  const now = Date.now();
+  if (dirCache && dirCache.dir === dir && now - dirCache.at < 10_000) return dirCache.files;
+  try {
+    dirCache = { dir, at: now, files: readdirSync(dir) };
+    return dirCache.files;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Frontmatter `bildfokus` → [x, y] in Prozent, oder null.
+ * Erlaubt: „50 70“ / „50% 70%“ / „50,70“ (x y), eine Zahl = nur senkrecht („70“ → [50, 70]),
+ * Wörter: oben, unten, mitte, links, rechts, auch kombiniert („unten links“).
+ */
+export function parseFocus(raw: unknown): [number, number] | null {
+  if (raw == null || raw === "") return null;
+  const s = String(raw).toLowerCase().trim();
+  const clamp = (n: number) => Math.max(0, Math.min(100, Math.round(n)));
+  const nums = s.match(/-?\d+(?:[.,]\d+)?/g)?.map((n) => parseFloat(n.replace(",", ".")));
+  if (nums && nums.length >= 2) return [clamp(nums[0]), clamp(nums[1])];
+  if (nums && nums.length === 1) return [50, clamp(nums[0])];
+  let x = 50, y = 50, hit = false;
+  if (/oben/.test(s)) { y = 15; hit = true; }
+  if (/unten/.test(s)) { y = 85; hit = true; }
+  if (/links/.test(s)) { x = 15; hit = true; }
+  if (/rechts/.test(s)) { x = 85; hit = true; }
+  if (/mitte/.test(s)) hit = true;
+  return hit ? [x, y] : null;
 }
 
 /**
@@ -170,12 +205,8 @@ export function resolveImageFile(name: string): string | null {
 export function galleryImages(slug: string, heroFile: string | null): string[] {
   const dir = imagesDir();
   if (!dir) return heroFile ? [heroFile] : [];
-  let files: string[];
-  try {
-    files = readdirSync(dir);
-  } catch {
-    return heroFile ? [heroFile] : [];
-  }
+  const files = listImageDir(dir);
+  if (!files) return heroFile ? [heroFile] : [];
   const slugLower = slug.toLowerCase();
   const isImg = (f: string) => /\.(jpe?g|png|webp)$/i.test(f);
   // Alle Dateien die mit dem Slug beginnen (name.jpg, name_1.jpg, name_selbst.jpg …)
@@ -338,6 +369,7 @@ export function parseRecipeFile(filePath: string, _imgDir: string | null): Recip
       image,
       imageExists,
       images,
+      imageFocus: image ? parseFocus(fm.bildfokus ?? fm.Bildfokus) : null,
       created,
       source: fm.quelle ? String(fm.quelle) : null,
       totalTime: overview.totalTime,
@@ -354,7 +386,31 @@ export function parseRecipeFile(filePath: string, _imgDir: string | null): Recip
   }
 }
 
+/** Gescannte Liste 20 s merken: /api/recipes, die Teilen-Seite und die Bild-Route
+ *  (Fokus-Übersteuerung) fragen oft kurz hintereinander. Neue Rezepte erscheinen
+ *  also spätestens 20 s nach dem Sync. */
+let scanCache: { at: number; recipes: Recipe[] } | null = null;
+const SCAN_TTL_MS = 20_000;
+
 export function scanRecipes(): Recipe[] {
+  const now = Date.now();
+  if (scanCache && now - scanCache.at < SCAN_TTL_MS) return scanCache.recipes;
+  const recipes = scanRecipesUncached();
+  scanCache = { at: now, recipes };
+  focusOverrides = new Map(
+    recipes.filter((r) => r.image && r.imageFocus).map((r) => [r.image!.toLowerCase(), r.imageFocus!]),
+  );
+  return recipes;
+}
+
+/** Von Hand gesetzter Fokus (Frontmatter `bildfokus`) je Titelbild-Dateiname (klein). */
+let focusOverrides: Map<string, [number, number]> | null = null;
+export function focusOverrideFor(imageName: string): [number, number] | null {
+  if (!focusOverrides) scanRecipes();
+  return focusOverrides?.get(imageName.toLowerCase()) ?? null;
+}
+
+function scanRecipesUncached(): Recipe[] {
   const dir = recipesDir();
   if (!dir || !existsSync(dir)) {
     console.error(`[recipes] Ordner nicht gefunden: ${dir}`);

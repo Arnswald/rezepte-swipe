@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { preload } from "react-dom";
 import { motion, AnimatePresence, useReducedMotion, useMotionValue, useTransform, animate, useDragControls } from "framer-motion";
 import {
   Loader2, ChevronRight, ChevronDown, Clock, Users, Flame,
@@ -41,6 +42,8 @@ interface Recipe {
   image: string | null;
   imageExists: boolean;
   images: string[];
+  /** Von Hand gesetzter Bildfokus des Titelbilds [x, y] in % (Frontmatter `bildfokus`) */
+  imageFocus?: [number, number] | null;
   created: string;
   source: string | null;
   totalTime: string | null;
@@ -233,9 +236,56 @@ function trendScore(c?: TrendCount): number {
 
 // Gewünschte Filter-Reihenfolge (alles andere hinten dran, alphabetisch)
 
-function imageUrl(image: string | null, w: 400 | 800 | 1200): string | null {
-  if (!image) return null;
-  return `/api/recipes/image/${encodeURIComponent(image)}?w=${w}`;
+// ── Bild-URLs ─────────────────────────────────────────────────
+// Jede Ansicht bekommt ihren Zuschnitt vom Server (um den Bildfokus, siehe
+// lib/imageFocus.ts) und per srcset die passende Breite; AVIF mit WebP als Rückfall.
+type Shape = "card" | "tile" | "square" | "wide" | "detail";
+const SHAPES: Record<Shape, { ar: string; widths: number[] }> = {
+  card: { ar: "4x5", widths: [480, 720, 1080] },      // Swipe-Karte
+  tile: { ar: "8x7", widths: [320, 480, 720, 1080] }, // Raster „Alle Gerichte“
+  square: { ar: "1x1", widths: [160, 320, 480, 720] }, // Mini-Vorschauen, Match
+  wide: { ar: "3x2", widths: [320, 480, 720] },       // Favoriten, „Für dich“
+  detail: { ar: "16x10", widths: [720, 1080] },       // Detail-Kopf
+};
+/** Version der Zuschnitt-Logik. Hochzählen, wenn sich der Ausschnitt ändert → neue URLs. */
+const IMG_V = 2;
+/** Karte: Seitenrand 2 × 16 px + Kartenpolster 2 × 12 px; Container max. 768 px. */
+const CARD_SIZES = "(min-width: 768px) 712px, calc(100vw - 56px)";
+
+function imageSrc(image: string, shape: Shape, w: number, fmt: "avif" | "webp", focus?: [number, number] | null): string {
+  const f = focus ? `&f=${focus[0]}-${focus[1]}` : "";
+  return `/api/recipes/image/${encodeURIComponent(image)}?w=${w}&ar=${SHAPES[shape].ar}&fmt=${fmt}&v=${IMG_V}${f}`;
+}
+function imageSrcSet(image: string, shape: Shape, fmt: "avif" | "webp", focus?: [number, number] | null): string {
+  return SHAPES[shape].widths.map((w) => `${imageSrc(image, shape, w, fmt, focus)} ${w}w`).join(", ");
+}
+
+/** <picture> mit AVIF + WebP. `contents`, damit das img selbst im Layout sitzt. */
+function Pic({
+  image, shape, sizes, focus, alt, className, eager = false, priority = "auto", onError, onLoad,
+}: {
+  image: string; shape: Shape; sizes: string; focus?: [number, number] | null; alt: string;
+  className?: string; eager?: boolean; priority?: "high" | "low" | "auto"; onError?: () => void; onLoad?: () => void;
+}) {
+  const widths = SHAPES[shape].widths;
+  return (
+    <picture className="contents">
+      <source type="image/avif" srcSet={imageSrcSet(image, shape, "avif", focus)} sizes={sizes} />
+      <img
+        src={imageSrc(image, shape, widths[Math.min(1, widths.length - 1)], "webp", focus)}
+        srcSet={imageSrcSet(image, shape, "webp", focus)}
+        sizes={sizes}
+        alt={alt}
+        loading={eager ? "eager" : "lazy"}
+        decoding="async"
+        fetchPriority={priority}
+        draggable={false}
+        onError={onError}
+        onLoad={onLoad}
+        className={className}
+      />
+    </picture>
+  );
 }
 
 // ── Makro-Chips ───────────────────────────────────────────────
@@ -267,11 +317,14 @@ function MacroChips({ r, size = "md", animate = false }: { r: Recipe; size?: "sm
 
 // ── Bild mit Fallback ─────────────────────────────────────────
 
-function RecipeImage({ r, w, className, eager = false }: { r: Recipe; w: 400 | 800 | 1200; className?: string; eager?: boolean }) {
+function RecipeImage({
+  r, shape, sizes, className, eager = false, priority = "auto", onLoad,
+}: {
+  r: Recipe; shape: Shape; sizes: string; className?: string; eager?: boolean; priority?: "high" | "low" | "auto"; onLoad?: () => void;
+}) {
   const [failed, setFailed] = useState(false);
-  const url = r.imageExists ? imageUrl(r.image, w) : null;
 
-  if (!url || failed) {
+  if (!r.imageExists || !r.image || failed) {
     return (
       <div className={`flex items-center justify-center bg-surface-elevated ${className}`}>
         <span className="text-5xl opacity-40">{CATEGORY_EMOJI[r.category] ?? "🍽️"}</span>
@@ -279,14 +332,15 @@ function RecipeImage({ r, w, className, eager = false }: { r: Recipe; w: 400 | 8
     );
   }
   return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={url}
+    <Pic
+      image={r.image}
+      shape={shape}
+      sizes={sizes}
+      focus={r.imageFocus}
       alt={r.name}
-      loading={eager ? "eager" : "lazy"}
-      decoding="async"
-      fetchPriority={eager ? "high" : "auto"}
-      draggable={false}
+      eager={eager}
+      priority={priority}
+      onLoad={onLoad}
       onError={() => setFailed(true)}
       className={className}
     />
@@ -306,9 +360,9 @@ function InfoPill({ icon: Icon, children }: { icon?: React.ComponentType<{ class
 }
 
 function RecipeCardFace({
-  r, index, total, onOpen,
+  r, index, total, onOpen, onImageLoad,
 }: {
-  r: Recipe; index: number; total: number; onOpen: () => void; animateMacros?: boolean;
+  r: Recipe; index: number; total: number; onOpen: () => void; animateMacros?: boolean; onImageLoad?: () => void;
 }) {
   return (
     <div className="bg-surface rounded-[26px] shadow-[0_10px_30px_rgba(70,50,30,0.10)] border border-border p-3 sm:p-3.5 h-full flex flex-col">
@@ -326,7 +380,7 @@ function RecipeCardFace({
         aria-label={`${r.name} öffnen`}
         className="relative block w-full flex-1 min-h-0 rounded-2xl overflow-hidden bg-surface-elevated"
       >
-        <RecipeImage r={r} w={800} eager className="absolute inset-0 w-full h-full object-cover pointer-events-none" />
+        <RecipeImage r={r} shape="card" sizes={CARD_SIZES} eager priority="high" onLoad={onImageLoad} className="absolute inset-0 w-full h-full object-cover pointer-events-none" />
         <span className="absolute bottom-2 right-2 px-2 py-1 rounded-full bg-black/45 backdrop-blur-sm text-white text-[10px] font-semibold flex items-center gap-0.5 pointer-events-none">
           Rezept <ChevronRight className="w-3 h-3" />
         </span>
@@ -373,6 +427,13 @@ function SwipeDeck({
   const superOp = useTransform(y, [-120, -30], [1, 0]);
 
   const current = recipes[index];
+  // Vorausladen erst, wenn die vorderste Karte ihr Bild hat (spätestens nach 1,5 s) —
+  // sonst teilen sich beim Start sechs Bilder die Leitung und die sichtbare Karte kommt zuletzt.
+  const [primed, setPrimed] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setPrimed(true), 1500);
+    return () => clearTimeout(t);
+  }, []);
   // Sperre während der Abflug-Animation: ein zweiter Tipp in den 0,32 s traf sonst
   // dieselbe Karte noch einmal und überschrieb das erste Urteil.
   const flying = useRef(false);
@@ -436,7 +497,7 @@ function SwipeDeck({
               <div className="bg-surface rounded-[26px] shadow-[0_10px_30px_rgba(70,50,30,0.10)] border border-border p-3 h-full flex flex-col">
                 <div className="h-4 shrink-0" />
                 <div className="relative w-full flex-1 min-h-0 rounded-2xl overflow-hidden bg-surface-elevated">
-                  <RecipeImage r={recipe} w={800} eager className="absolute inset-0 w-full h-full object-cover" />
+                  <RecipeImage r={recipe} shape="card" sizes={CARD_SIZES} eager className="absolute inset-0 w-full h-full object-cover" />
                   <div className="absolute inset-0 bg-black/5" />
                 </div>
                 <div className="h-24 shrink-0" />
@@ -444,6 +505,14 @@ function SwipeDeck({
             </motion.div>
           );
         })}
+
+        {/* Vorausladen: die drei Karten hinter dem sichtbaren Stapel, gleiche URLs wie die
+            Karte selbst (srcset/sizes), niedrige Priorität — die vorderste Karte geht vor. */}
+        <div aria-hidden className="absolute w-px h-px overflow-hidden opacity-0 pointer-events-none">
+          {primed && recipes.slice(index + 3, index + 6).map((recipe) => (
+            <RecipeImage key={recipe.slug} r={recipe} shape="card" sizes={CARD_SIZES} eager priority="low" className="w-full h-full" />
+          ))}
+        </div>
 
         {/* Vorderste Karte — beide Achsen draggable */}
         <motion.div
@@ -479,6 +548,7 @@ function SwipeDeck({
             total={recipes.length}
             onOpen={() => onOpen(current)}
             animateMacros={!prefersReduced}
+            onImageLoad={() => setPrimed(true)}
           />
         </motion.div>
       </div>
@@ -516,6 +586,28 @@ function SwipeDeck({
           <Check className="w-8 h-8" strokeWidth={2.5} />
         </button>
       </div>
+    </div>
+  );
+}
+
+// ── Platzhalter-Karte (vor dem Hydrieren und während die Liste lädt) ─
+// Gleiche Maße wie Karte + Knopfreihe, damit beim Erscheinen nichts springt.
+function DeckSkeleton() {
+  return (
+    <div className="flex flex-col h-full min-h-0" aria-hidden>
+      <div className="relative flex-1 min-h-0">
+        <div className="bg-surface rounded-[26px] shadow-[0_10px_30px_rgba(70,50,30,0.10)] border border-border p-3 sm:p-3.5 h-full flex flex-col">
+          <div className="h-[24px] shrink-0" />
+          <div className="relative w-full flex-1 min-h-0 rounded-2xl bg-surface-elevated animate-pulse" />
+          <div className="px-1 pt-2.5 shrink-0">
+            <div className="h-6 w-3/4 rounded-md bg-surface-elevated" />
+            <div className="h-4 w-full rounded-md bg-surface-elevated mt-2" />
+            <div className="h-4 w-2/3 rounded-md bg-surface-elevated mt-1.5" />
+            <div className="h-6 w-1/2 rounded-full bg-surface-elevated mt-2.5" />
+          </div>
+        </div>
+      </div>
+      <div className="shrink-0 h-16 mt-5" />
     </div>
   );
 }
@@ -576,7 +668,7 @@ function RecipeGrid({ recipes, onOpen, verdicts, counts }: { recipes: Recipe[]; 
               hero ? "col-span-2 row-span-2" : ""
             }`}
           >
-            <RecipeImage r={r} w={hero ? 800 : 400} className="absolute inset-0 w-full h-full object-cover" />
+            <RecipeImage r={r} shape="tile" sizes={hero ? "(min-width: 1024px) 50vw, 100vw" : "(min-width: 1024px) 25vw, 50vw"} eager={i < 6} className="absolute inset-0 w-full h-full object-cover" />
             <div className="absolute inset-x-0 bottom-0 h-3/5 bg-gradient-to-t from-black/90 via-black/40 to-transparent" />
             {/* Trending-Badge: wie oft geliked/super-geliked (öffentlich, keine Namen) */}
             {c && c.likes > 0 && (
@@ -625,9 +717,13 @@ function GalleryHeader({ r }: { r: Recipe }) {
     );
   }
 
+  // Fokus aus dem Frontmatter gilt nur fürs Titelbild
+  const focusOf = (img: string) => (img === r.image ? r.imageFocus : null);
   if (imgs.length === 1) {
-    const src = imageUrl(imgs[0], 1200);
-    return src ? <Lens src={src} alt={r.name} zoom={2.2} lensSize={150} className="w-full h-full" /> : null;
+    // Lupe braucht eine einzelne URL (Hintergrundbild) → WebP; Zuschnitt 16:10 = Kopfformat,
+    // dadurch stimmt die Lupenposition jetzt auch (vorher schnitt object-cover unsichtbar ab).
+    const src = imageSrc(imgs[0], "detail", 1080, "webp", focusOf(imgs[0]));
+    return <Lens src={src} alt={r.name} zoom={2.2} lensSize={150} className="w-full h-full" />;
   }
 
   return (
@@ -640,17 +736,12 @@ function GalleryHeader({ r }: { r: Recipe }) {
           setActive(Math.round(el.scrollLeft / el.clientWidth));
         }}
       >
-        {imgs.map((img, i) => {
-          const src = imageUrl(img, 1200);
-          return (
-            <div key={img + i} className="w-full h-full shrink-0 snap-center bg-surface-elevated">
-              {src && (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={src} alt={`${r.name} ${i + 1}`} className="w-full h-full object-cover" draggable={false} loading={i === 0 ? "eager" : "lazy"} />
-              )}
-            </div>
-          );
-        })}
+        {imgs.map((img, i) => (
+          <div key={img + i} className="w-full h-full shrink-0 snap-center bg-surface-elevated">
+            <Pic image={img} shape="detail" sizes="(min-width: 640px) 512px, 100vw" focus={focusOf(img)}
+              alt={`${r.name} ${i + 1}`} className="w-full h-full object-cover" eager={i === 0} />
+          </div>
+        ))}
       </div>
       <div className="absolute bottom-14 left-1/2 -translate-x-1/2 z-20 flex gap-1.5 pointer-events-none">
         {imgs.map((_, i) => (
@@ -1506,7 +1597,7 @@ function MatchCelebration({
         </p>
 
         <div className="mt-6 mx-auto w-44 h-44 rounded-[28px] overflow-hidden shadow-2xl ring-4 ring-white/30 bg-black/20">
-          <RecipeImage r={recipe} w={800} className="w-full h-full object-cover" />
+          <RecipeImage r={recipe} shape="square" sizes="176px" eager className="w-full h-full object-cover" />
         </div>
 
         <h3 className="text-white text-xl font-extrabold mt-4 leading-tight">{recipe.name}</h3>
@@ -1842,7 +1933,7 @@ function AccountView({
                           className="w-full flex items-center gap-3 p-1.5 rounded-xl text-left active:bg-surface-elevated transition-colors"
                         >
                           <div className="w-11 h-11 shrink-0 rounded-lg overflow-hidden bg-surface-elevated">
-                            {r ? <RecipeImage r={r} w={400} className="w-full h-full object-cover" /> : null}
+                            {r ? <RecipeImage r={r} shape="square" sizes="48px" className="w-full h-full object-cover" /> : null}
                           </div>
                           <span className="flex-1 min-w-0 text-sm font-medium text-text-primary truncate">{m.recipeName || r?.name || m.slug}</span>
                           {m.bothSuper && (
@@ -1943,7 +2034,7 @@ function AccountView({
                             className="w-full flex items-center gap-3 p-1.5 rounded-xl text-left active:bg-surface-elevated transition-colors"
                           >
                             <div className="w-10 h-10 shrink-0 rounded-lg overflow-hidden bg-surface-elevated">
-                              {r ? <RecipeImage r={r} w={400} className="w-full h-full object-cover" /> : null}
+                              {r ? <RecipeImage r={r} shape="square" sizes="48px" className="w-full h-full object-cover" /> : null}
                             </div>
                             <span className="flex-1 min-w-0 text-sm font-medium text-text-primary truncate">{m.recipeName || r?.name || m.slug}</span>
                             <span className={`shrink-0 flex items-center gap-1 text-[11px] font-bold tabular-nums px-2 py-0.5 rounded-full ${m.unanimous ? "bg-[#3f6b43]/15 text-[#3f6b43]" : "bg-surface-elevated text-text-muted"}`}>
@@ -1972,7 +2063,7 @@ function AccountView({
                           className="w-full flex items-center gap-3 p-1.5 rounded-xl text-left active:bg-surface-elevated transition-colors"
                         >
                           <div className="w-11 h-11 shrink-0 rounded-lg overflow-hidden bg-surface-elevated">
-                            {r ? <RecipeImage r={r} w={400} className="w-full h-full object-cover" /> : null}
+                            {r ? <RecipeImage r={r} shape="square" sizes="48px" className="w-full h-full object-cover" /> : null}
                           </div>
                           <span className="flex-1 min-w-0 text-sm font-medium text-text-primary truncate">{m.recipeName || r?.name || m.slug}</span>
                           <span className={`shrink-0 flex items-center gap-1 text-[11px] font-bold tabular-nums px-2 py-0.5 rounded-full ${m.unanimous ? "bg-[#3f6b43]/15 text-[#3f6b43]" : "bg-surface-elevated text-text-muted"}`}>
@@ -2009,7 +2100,7 @@ function AccountView({
                   onClick={() => onOpen(r)}
                   className="relative rounded-xl overflow-hidden aspect-[4/3] bg-surface-elevated text-left active:scale-[0.98] transition-transform"
                 >
-                  <RecipeImage r={r} w={400} className="absolute inset-0 w-full h-full object-cover" />
+                  <RecipeImage r={r} shape="wide" sizes="(min-width: 640px) 33vw, 50vw" className="absolute inset-0 w-full h-full object-cover" />
                   <div className="absolute inset-x-0 bottom-0 h-3/5 bg-gradient-to-t from-black/85 to-transparent" />
                   {v === "super" && (
                     <span className="absolute top-1.5 right-1.5 w-5 h-5 rounded-full bg-[#d99a2b] flex items-center justify-center"><Star className="w-3 h-3 fill-white text-white" /></span>
@@ -2049,7 +2140,7 @@ function AccountView({
                 className="w-full flex items-center gap-3 bg-surface border border-border rounded-xl p-2 text-left active:scale-[0.99] transition-transform"
               >
                 <div className="w-12 h-12 rounded-lg overflow-hidden bg-surface-elevated shrink-0">
-                  <RecipeImage r={r} w={400} className="w-full h-full object-cover" />
+                  <RecipeImage r={r} shape="square" sizes="48px" className="w-full h-full object-cover" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-semibold text-text-primary truncate">{r.name}</p>
@@ -2129,7 +2220,13 @@ function AccountView({
 
 // ── Seite ─────────────────────────────────────────────────────
 
+/** Schlanke Rezeptliste für die erste Ansicht (ohne Zubereitung/Tipps). */
+const RECIPES_LITE_URL = "/api/recipes?lite=1";
+
 export default function RezeptePage() {
+  // Liste schon mit dem HTML anfordern (<link rel="preload">), parallel zum JavaScript.
+  // Vorher startete die Anfrage erst nach dem Hydrieren — eine volle Runde später.
+  preload(RECIPES_LITE_URL, { as: "fetch", crossOrigin: "anonymous" });
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [diag, setDiag] = useState<Diagnostics | null>(null);
@@ -2148,6 +2245,10 @@ export default function RezeptePage() {
   // (nach „Nochmal von vorn“ sind schon bewertete Karten im Stapel).
   const [history, setHistory] = useState<{ slug: string; prev: Verdict | null }[]>([]);
   const [deckList, setDeckList] = useState<Recipe[]>([]);
+  // Aus welcher Liste der Stapel zuletzt gebaut wurde. Weicht sie von `filtered` ab, ist
+  // der Stapel noch nicht fertig (ein Render lang nach dem Laden) → Platzhalter statt
+  // kurz „Alles durchgeswiped!“ und Layout-Sprung.
+  const [deckSource, setDeckSource] = useState<Recipe[] | null>(null);
   const [deckMode, setDeckMode] = useState<"new" | "all">("new"); // new = nur ungeswipte, all = alles außer „nö"
   const [suggestOpen, setSuggestOpen] = useState(false);
   const [guestName, setGuestName] = useState<string | null>(null);
@@ -2372,7 +2473,9 @@ export default function RezeptePage() {
   useEffect(() => {
     // Schlanke Liste (ohne Zubereitung/Tipps, ~60 % kleiner) — das volle Rezept
     // holt das Detail-Sheet beim Öffnen nach.
-    fetch("/api/recipes?lite=1", { cache: "no-store" })
+    // Kein `cache: "no-store"`: sonst nutzt der Browser die vorgeladene Antwort nicht.
+    // Aktuell bleibt es trotzdem (Server: no-cache + ETag → 304 beim erneuten Öffnen).
+    fetch(RECIPES_LITE_URL)
       .then((r) => r.json())
       .then((d) => {
         const list: Recipe[] = (d.recipes ?? []).map((r: Recipe) => ({ ...r, steps: r.steps ?? [], tips: r.tips ?? [] }));
@@ -2411,6 +2514,7 @@ export default function RezeptePage() {
   useEffect(() => {
     const v = verdictsRef.current;
     setDeckList(orderDeck(filtered.filter((r) => !v[r.slug])));
+    setDeckSource(filtered);
     setDeckMode("new");
     setIndex(0);
     setHistory([]);
@@ -2544,20 +2648,8 @@ export default function RezeptePage() {
       ?.then(() => { setIndex(0); setHistory([]); toast.success("Neuer Abend", "Deine Runde ist zurückgesetzt."); });
   }, [eveningGroup, postEvening, toast]);
 
-  // Vorausladen: die nächsten Karten-Bilder schon holen, damit Wischen instant wirkt.
-  useEffect(() => {
-    if (mode !== "swipe") return;
-    const deck = eveningGroup ? eveningRecipes : deckList;
-    if (deck.length === 0) return;
-    const AHEAD = 5;
-    for (let i = index; i < Math.min(index + AHEAD, deck.length); i++) {
-      const r = deck[i];
-      if (!r?.imageExists || !r.image) continue;
-      const pre = new window.Image();
-      pre.decoding = "async";
-      pre.src = imageUrl(r.image, 800)!;
-    }
-  }, [deckList, eveningRecipes, eveningGroup, index, mode]);
+  // Vorausladen der nächsten Karten-Bilder passiert jetzt im SwipeDeck selbst (unsichtbare
+  // <picture> mit denselben srcset/sizes wie die Karte, sonst lud der Browser zweimal).
 
   const showDeck = !loading && mode === "swipe" && (eveningGroup
     ? (eveningRecipes.length > 0 && index < eveningRecipes.length)
@@ -2593,7 +2685,19 @@ export default function RezeptePage() {
   });
 
   // Vor allem anderen: Name abfragen (nach dem Lesen aus localStorage, um Flackern zu vermeiden)
-  if (!hydrated) return <div className="h-[100dvh]" />;
+  // Vor dem Hydrieren (Server-HTML) schon das Grundgerüst zeigen statt einer leeren Seite:
+  // Titel + Platzhalter-Karte erscheinen mit dem HTML, nicht erst nach dem JavaScript.
+  if (!hydrated) return (
+    <div className="relative mx-auto w-full max-w-3xl h-[100dvh] flex flex-col px-4 pb-[calc(env(safe-area-inset-bottom)+14px+64px+14px)]">
+      <div className="shrink-0 pt-[calc(env(safe-area-inset-top)+0.75rem)]">
+        <div className="flex items-end justify-between gap-3 pt-1 pb-1">
+          <h1 className="text-[26px] font-extrabold tracking-tight leading-[1.1] text-text-primary">Entdecken</h1>
+        </div>
+        <div className="h-[34px] mt-3" />
+      </div>
+      <div className="flex-1 min-h-0 flex flex-col mt-4"><DeckSkeleton /></div>
+    </div>
+  );
   if (!guestName) return (
     <AuthGate onDone={(n, id, v) => {
       setGuestName(n); setGuestId(id);
@@ -2604,7 +2708,11 @@ export default function RezeptePage() {
   // Raster und Profil scrollen über die volle Höhe: oben läuft der Inhalt hinter die
   // Navigation und blendet aus, unten blendet er vor der Kante aus (statt harter Schnitt).
   // Der Stapel (Entdecken) bleibt im festen Layout.
-  const scrollMode = !showDeck;
+  // Beim Laden im Entdecken-Tab schon das Stapel-Layout (Platzhalter-Karte), sonst sprang
+  // der Inhalt beim Umschalten vom Scroll- ins Stapel-Layout (CLS 0,13).
+  const deckPending = !loading && mode === "swipe" && !eveningGroup && deckSource !== filtered;
+  const deckLayout = showDeck || (mode === "swipe" && (loading || deckPending));
+  const scrollMode = !deckLayout;
 
   return (
     <div className={`relative mx-auto w-full max-w-3xl h-[100dvh] flex flex-col px-4 ${scrollMode ? "" : "pb-[calc(env(safe-area-inset-bottom)+14px+64px+14px)]"}`}>
@@ -2623,7 +2731,7 @@ export default function RezeptePage() {
       </div>
 
       {/* Kategorie-Filter — dezent, eine Reihe (nicht im Account, nicht im Abend-Modus) */}
-      {mode !== "account" && !eveningGroup && categories.length > 0 && (
+      {mode !== "account" && !eveningGroup && (categories.length > 0 || loading) && (
         <div className="flex flex-nowrap items-center gap-2 shrink-0 mt-3 overflow-x-auto scrollbar-none -mx-4 px-4">
           {["Alle", ...CAT_GROUPS].map((cat) => {
             const active = activeCat === cat;
@@ -2656,13 +2764,15 @@ export default function RezeptePage() {
       <div
         ref={contentRef}
         onScroll={mode === "grid" ? onGridScroll : undefined}
-        className={showDeck ? "flex-1 min-h-0 flex flex-col mt-4" : "flex-1 min-h-0 overflow-y-auto overflow-x-hidden -mx-4 px-4 pb-[calc(env(safe-area-inset-bottom)+14px+64px+2rem)]"}
+        className={deckLayout ? "flex-1 min-h-0 flex flex-col mt-4" : "flex-1 min-h-0 overflow-y-auto overflow-x-hidden -mx-4 px-4 pb-[calc(env(safe-area-inset-bottom)+14px+64px+2rem)]"}
         style={scrollMode ? { paddingTop: Math.max(headerH - 4, 0) } : undefined}
       >
-        {loading ? (
-          <div className="flex justify-center py-20">
-            <Loader2 className="w-5 h-5 text-text-muted animate-spin" />
-          </div>
+        {loading || deckPending ? (
+          mode === "swipe" ? <DeckSkeleton /> : (
+            <div className="flex justify-center py-20">
+              <Loader2 className="w-5 h-5 text-text-muted animate-spin" />
+            </div>
+          )
         ) : recipes.length === 0 ? (
           <div className="bg-surface border border-amber-500/30 rounded-xl p-4 space-y-2">
             <div className="flex items-center gap-2 text-amber-600">
@@ -2799,7 +2909,7 @@ export default function RezeptePage() {
                   {forYou.map((r) => (
                     <button key={r.slug} onClick={() => setDetail(r)} className="shrink-0 w-36 text-left active:scale-[0.98] transition-transform">
                       <div className="relative w-36 h-24 rounded-xl overflow-hidden bg-surface-elevated border border-border">
-                        <RecipeImage r={r} w={400} className="w-full h-full object-cover" />
+                        <RecipeImage r={r} shape="wide" sizes="144px" className="w-full h-full object-cover" />
                       </div>
                       <p className="text-xs font-semibold text-text-primary mt-1.5 leading-snug line-clamp-2">{r.name}</p>
                     </button>

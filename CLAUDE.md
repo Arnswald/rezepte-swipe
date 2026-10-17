@@ -87,6 +87,8 @@ Body-H2-Sektionen: `📋 Überblick` (Tabelle mit Gesamtzeit/Portionen/Schwierig
 `🛒 Zutaten` (Gruppen fett, Items als `- [ ]`), `👨‍🍳 Zubereitung` (nummeriert),
 `💡 Tipps`. Bild-Auflösung ist **case-insensitiv** (Linux-Container ist
 case-sensitive, macOS/Frontmatter oft nicht).
+Optional `bildfokus:` (seit 17.10.2026): wo im Titelbild das Gericht sitzt, z. B. `"50 70"` (x y in %),
+`"70"` (nur senkrecht) oder `unten` / `oben links`. Übersteuert den automatischen Bildfokus.
 
 **Kategorien:** Am 27.07.2026 auf 3 reduziert (`Hauptgericht`, `Frühstück`, `Dessert`; „Salat" → Hauptgericht,
 „Snack" → Dessert). Die verbindliche Liste in `00 System/config/Kochbuch-Struktur.md` hat aber 9 Werte, und die
@@ -289,7 +291,8 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
 | `src/app/api/admin/connections/route.ts` | POST/DELETE (x-admin-pin): zwei Personen verbinden/trennen |
 | `src/app/api/recipes/route.ts` | GET: alle Rezepte + Kategorien. `?lite=1` ohne Zubereitung/Tipps (nutzt die App), `?slug=x` ein Rezept komplett (Detail lädt nach) |
 | `src/app/api/recipes/trending/route.ts` | GET: öffentliche Beliebtheits-Zähler (keine Namen) |
-| `src/app/api/recipes/image/[name]/route.ts` | Bild → WebP, Disk-Cache |
+| `src/app/api/recipes/image/[name]/route.ts` | Bild → AVIF/WebP/JPEG, Zuschnitt `ar` um den Bildfokus, Disk-Cache (`.v2.`-Schlüssel); alte `?w=`-URLs unverändert |
+| `src/lib/imageFocus.ts` | Bildfokus je Bild (Median aus sharp attention/entropy + Essens-Score), gemerkt in `DATA_DIR/image-cache/focus-v1.json` |
 | `src/app/api/recipes/submit/route.ts` | POST (multipart): volles Rezept + Bild → Template-.md + WebP in `DATA_DIR/einreichungen/` + n8n-Webhook |
 | `src/app/api/recipes/suggest/route.ts` | Gast-Vorschläge (leichte Idee/Link) entgegennehmen |
 | `src/components/ui/` | NumberFlow, Lens, AnimatedInput, Toast |
@@ -321,6 +324,15 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
 - **Login-Felder brauchen `autoComplete` und ein `<form>`**, sonst bietet iOS keinen Schlüsselbund an. Safari und Home-Bildschirm-App haben getrennten Speicher, dort muss man sich je einmal anmelden.
 - **Optik-Test headless:** CDP-Skript mit `render-chrome`, 390×844, localStorage `rezepte-guest-name`/`-id` setzen, dann `[aria-label=…]` klicken und `Page.captureScreenshot`.
 - **Offen (Entscheidung Christian):** Die guestId ist das einzige Geheimnis und wird über Matches/Gruppen an andere ausgeliefert. Richtige Lösung: Session-Cookie beim Login, guestId serverseitig ableiten (alle müssen sich einmal neu anmelden).
+
+## Bilder & Ladezeit (perf-bilder-1018, 17.10.2026)
+
+- **Jede Ansicht hat ihren Zuschnitt vom Server** (`SHAPES` in `page.tsx`: Karte 4:5, Raster 8:7, Mini 1:1, Favoriten 3:2, Detail/Teilen 16:10) plus `srcset`/`sizes`, AVIF mit WebP-Rückfall per `<picture>`. Format steht in der URL (`fmt=`), nicht im Accept-Header: Cloudflare cacht `/api/recipes/image/*.jpg` nach URL und ignoriert `Vary`.
+- **Warum Bilder „nicht mittig“ waren:** Quellbilder sind 9:16 (Instagram-Standbild, Gericht unten, Gesicht/Schrift oben) oder 16:9 (KI). Detail (16:10) und Raster (8:7) schnitten stur mittig → Gesicht statt Teller. Jetzt um den Bildfokus, bei Hochformat nur nach unten (50–80 %). Ausreißer per `bildfokus:` im Frontmatter korrigieren.
+- **Zuschnitt-Logik geändert?** `IMG_V` in `page.tsx` hochzählen (neue URLs, sonst halten Browser/Cloudflare ein Jahr den alten Ausschnitt) und den Cache-Schlüssel in der Bild-Route versionieren. Alte Cache-Dateien nicht löschen.
+- **Erste Ansicht:** `/api/recipes?lite=1` wird per `<link rel=preload>` mit dem HTML geholt (darum kein `cache: "no-store"` beim fetch), Antwort mit ETag → 304 beim erneuten Öffnen. Vor dem Hydrieren und solange der Stapel baut: `DeckSkeleton` (CLS war 0,13 durch den Wechsel Scroll-↔Stapel-Layout und ein kurz aufblitzendes „Alles durchgeswiped!“).
+- **Vorausladen:** im `SwipeDeck` als unsichtbare `<picture>` (Karten +3 bis +5), erst nachdem das vorderste Bild da ist.
+- `scanRecipes` ist 20 s gemerkt, das Bilder-Verzeichnis 10 s (vorher ≈190 × `readdir` pro Anfrage).
 
 ## Konventionen
 

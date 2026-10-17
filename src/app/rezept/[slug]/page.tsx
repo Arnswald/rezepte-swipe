@@ -17,9 +17,12 @@ import { ShareButton } from "@/components/ShareButton";
 
 export const dynamic = "force-dynamic";
 
-function img(file: string | null, w: number): string | null {
-  if (!file) return null;
-  return `/api/recipes/image/${encodeURIComponent(file)}?w=${w}`;
+/** 16:10-Zuschnitt um den Bildfokus (wie der Detail-Kopf in der App). JPEG für die
+ *  WhatsApp-/OG-Vorschau, WebP für die Seite selbst. */
+function img(r: Recipe, w: number, fmt: "jpg" | "webp"): string | null {
+  if (!r.imageExists || !r.image) return null;
+  const f = r.imageFocus ? `&f=${r.imageFocus[0]}-${r.imageFocus[1]}` : "";
+  return `/api/recipes/image/${encodeURIComponent(r.image)}?w=${w}&ar=16x10&fmt=${fmt}&v=2${f}`;
 }
 
 export async function generateMetadata(
@@ -30,7 +33,7 @@ export async function generateMetadata(
   if (!r) return { title: "Rezept nicht gefunden — Rezepte" };
 
   const desc = r.description || "Ein Lieblingsrezept zum Nachkochen.";
-  const ogImg = r.imageExists ? img(r.image, 1200) : null;
+  const ogImg = img(r, 1200, "jpg");
 
   return {
     title: `${r.name} — Rezepte`,
@@ -75,7 +78,7 @@ export default async function RezeptPage({ params }: { params: Promise<{ slug: s
   const r: Recipe | null = getRecipeBySlug(slug);
   if (!r) return <NotFound />;
 
-  const hero = r.imageExists ? img(r.image, 1200) : null;
+  const hero = img(r, 1080, "webp");
   const macros = [
     { label: "kcal", value: r.kcal, suffix: "" },
     { label: "Protein", value: r.protein, suffix: " g" },

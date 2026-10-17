@@ -10,6 +10,7 @@
  */
 
 import { NextResponse } from "next/server";
+import { createHash } from "crypto";
 import { scanRecipes, recipesDiagnostics, getRecipeBySlug } from "@/lib/recipes";
 
 export const dynamic = "force-dynamic";
@@ -34,7 +35,15 @@ export async function GET(req: Request) {
     const lite = searchParams.get("lite") === "1";
     const recipes = lite ? all.map(({ steps: _s, tips: _t, ...rest }) => ({ ...rest, lite: true })) : all;
     const categories = [...new Set(all.map((r) => r.category))].sort();
-    return NextResponse.json({ recipes, categories, diagnostics: diag });
+    // ETag: beim erneuten Öffnen (Home-Bildschirm-App) antwortet der Server mit 304
+    // statt ~180 KB (~50 KB komprimiert). „no-cache“ = immer nachfragen, nie veraltet.
+    const body = JSON.stringify({ recipes, categories, diagnostics: diag });
+    const etag = `"${createHash("sha1").update(body).digest("base64url").slice(0, 22)}"`;
+    const headers = { "Cache-Control": "no-cache", ETag: etag };
+    // Cloudflare schwächt das ETag beim Komprimieren ab (W/"…") → Präfix ignorieren
+    const inm = (req.headers.get("if-none-match") ?? "").split(",").map((t) => t.trim().replace(/^W\//, ""));
+    if (inm.includes(etag)) return new Response(null, { status: 304, headers });
+    return new Response(body, { headers: { ...headers, "Content-Type": "application/json" } });
   } catch (err) {
     return NextResponse.json(
       { error: err instanceof Error ? err.message : String(err), diagnostics: diag },
