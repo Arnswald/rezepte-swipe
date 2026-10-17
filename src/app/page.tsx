@@ -3046,7 +3046,7 @@ export default function RezeptePage() {
   // Kopf: großer Titel (+ „Heute N ♥“ im Stapel) und Kategorien. Im Stapel fest oben,
   // in Raster/Profil scrollt er mit dem Inhalt weg (vorher schwebte er mit einem hohen
   // Verlauf über dem Inhalt, der in Titel und Chips hineinragte). Oben bleibt nur ein
-  // schmaler Ausblender: Statusleiste + 14 px.
+  // schmaler Ausblender, der schon in der Statusleiste ausläuft (bis 4 px darunter).
   const header = (
     <div className={scrollMode ? "pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-3" : "shrink-0 pt-[calc(env(safe-area-inset-top)+0.75rem)]"}>
       {/* Großer Titel wie in Outfits; die Bereiche wechselt die Glas-Leiste unten */}
@@ -3107,8 +3107,8 @@ export default function RezeptePage() {
       {scrollMode && (
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-x-0 top-0 z-30 h-[calc(env(safe-area-inset-top)+14px)]"
-          style={{ background: "linear-gradient(to bottom, var(--bg) 0%, var(--bg) calc(100% - 14px), color-mix(in srgb, var(--bg) 0%, transparent) 100%)" }}
+          className="pointer-events-none absolute inset-x-0 top-0 z-30 h-[calc(env(safe-area-inset-top)+4px)]"
+          style={{ background: "linear-gradient(to bottom, var(--bg) 0%, var(--bg) 45%, color-mix(in srgb, var(--bg) 0%, transparent) 100%)" }}
         />
       )}
 
