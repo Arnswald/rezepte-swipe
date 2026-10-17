@@ -21,7 +21,7 @@
   /* Text */
   --text-primary: #2b2419;
   --text-secondary: #6d6151;
-  /* #776854: 4,7 : 1 auf Creme, 5,6 : 1 auf Weiß (vorher #a89a86 mit 2,4 / 2,8 : 1) */
+  /* #776854: 4,7 : 1 auf Creme, 5,4 : 1 auf Weiß (vorher #a89a86 mit 2,4 / 2,8 : 1) */
   --text-muted: #776854;
   /* nur Dekoratives (leere Sterne, Kreis-Ränder), kein Text */
   --text-faint: #b3a693;

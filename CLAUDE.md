@@ -261,6 +261,8 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
     **Meine Favoriten** → **Schon gekocht** → **Rezept einreichen** (akzentfarben,
     weiter oben) → Gruppen → Freundescode → Verbinden → Was ich nicht mag → Abmelden.
   - **Favoriten**: max. 10, Rest per „Alle N anzeigen" aufklappbar (`favsExpanded`).
+- **v10 (Branch `heute-gemerkt-1018`, 17.10.2026): „Heute gemerkt“ + Design-Mängel aus `docs/review-2026-10-18.md`.**
+  Dreht die v8-Regel um: **Nö gilt nur für heute.** Details im Abschnitt „Heute gemerkt“ unten.
 - **Ideen**: saisonale Trending-Gewichtung (Spargelzeit etc.),
   Gericht-Detail-Statistik im Admin, Export, Sterne-Schnitt öffentlich anzeigen.
 
@@ -274,13 +276,14 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
 | `src/app/rezept/[slug]/page.tsx` | Teilbare, server-gerenderte Rezept-Seite (OG-Tags) |
 | `src/components/ShareButton.tsx` | Teilen via `navigator.share`, Fallback Link-Copy |
 | `src/lib/recipes.ts` | Rezept-Parser (+ `getRecipeBySlug`) + `deriveTags` (Zutaten-Tags fürs Empfehlungs-Scoring) |
-| `src/lib/db.ts` | better-sqlite3: `verdicts` + `guests`/`connections` + `groups`/`group_members` + `ratings` (Sterne) + `preferences` (Abneigungen) + `cook_events` (Koch-Verlauf, Autor+Partner+Datum), Codes/Matches/Trending/Gruppen-Ranking |
+| `src/lib/day.ts` | Tageslogik „Heute“: `dayKey` (Tag beginnt 4:00 Europe/Berlin), `shiftDay`, `showYesterday` (4–12 Uhr). Server und Browser |
+| `src/lib/db.ts` | better-sqlite3: `verdicts` + `swipe_days` (Tageseinträge, „Heute gemerkt“) + `guests`/`connections` + `groups`/`group_members` + `ratings` (Sterne) + `preferences` (Abneigungen) + `cook_events` (Koch-Verlauf, Autor+Partner+Datum), Codes/Matches/Trending/Gruppen-Ranking |
 | `src/lib/guard.ts` | Bremse gegen Durchprobieren (Fehlversuche je IP: Login 10/15 Min, Admin-PIN 5/30 Min, Freundes-/Gruppencode 15/15 Min) + `checkAdminPin` (zeitkonstant) für alle Admin-Routen |
 | `src/lib/env.ts` | Env-Zugriff (RECIPES-Pfade, DATA_DIR, ADMIN_PIN, SITE_URL, Webhook) |
 | `src/app/api/auth/register/route.ts` | POST: Account anlegen (Benutzername+Passwort, übernimmt guestId) |
 | `src/app/api/auth/login/route.ts` | POST: Login → Identität + Server-Bewertungen |
-| `src/app/api/me/route.ts` | POST: Server-Stand (Verdicts, Sterne, Abneigungen, Freundescode) fürs Hydrieren |
-| `src/app/api/verdict/route.ts` | POST: Verdict speichern/löschen (+ `ensureGuest`) |
+| `src/app/api/me/route.ts` | POST: Server-Stand (Verdicts, Sterne, Abneigungen, Freundescode, `swipeDays`) fürs Hydrieren |
+| `src/app/api/verdict/route.ts` | POST: Swipe → Tageseintrag (`swipe_days`) + Dauerstand (`verdicts`, Nö überschreibt kein Like); `undo: true` setzt beides exakt zurück |
 | `src/app/api/rating/route.ts` | POST: Sterne-Bewertung (1–5) speichern/löschen |
 | `src/app/api/preferences/route.ts` | POST: „Was ich nicht mag"-Tags speichern |
 | `src/app/api/cooked/route.ts` | POST (add/remove): Koch-Verlauf „bereits gekocht" (mit wem + Datum) |
@@ -345,6 +348,25 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
 - **Kennzeichnung:** nur in der Detail-Galerie („1 / 2 · KI-Bild“ in der Zähler-Pille, bei nur einem Bild eigene kleine Pille). Auf der Karte bewusst nicht: dort stehen schon Kategorie, Zähler, „Rezept“-Knopf und Chips, ein weiteres Abzeichen wäre Unruhe; die KI-Bilder sind als Foto des Gerichts gemeint, die Offenlegung im Detail reicht.
 - **Neue Rezepte einstufen:** Kontaktbogen bauen (Karten-Zuschnitt vom Server holen: `/api/recipes/image/<datei>?w=480&ar=4x5&fmt=webp&v=2`), ansehen, Eintrag in `kartenbild.json` ergänzen. Oder einfach `kartenbild: ki` ins Frontmatter.
 - `bildfokus` hilft bei den Personen-Bildern ohne KI-Bild meist nicht: das Gericht sitzt am unteren Bildrand, der Fokus steht dort schon am Anschlag (80 %). Da hilft nur ein neues KI-Bild.
+
+## Heute gemerkt (heute-gemerkt-1018, 17.10.2026)
+
+- **Ablauf:** Entdecken zeigt **alle** Rezepte außer den **heute** bewerteten (rechts, links, hoch). Ab **4:00 Uhr Europe/Berlin** ist alles wieder im Stapel (`dayKey` = Berliner Datum von Zeit − 4 h). Sind alle für heute durch: `DayDone` mit „Heute gemerkt ansehen“ und „Nochmal alle ansehen“ (zeigt auch heute bewertete, Karte trägt „Heute gemerkt“; rechts ändert nichts, links nimmt aus „Heute“ heraus). Tageswechsel bei offener App: `visibilitychange`/`focus` + Minuten-Takt.
+- **Profil oben:** „Heute gemerkt“ (Kacheln, Superlikes zuerst, Zeit, Tipp öffnet Detail) → „Gestern gemerkt“ (nur 4–12 Uhr, einklappbar) → „Insgesamt oft gemocht“ (an wie vielen Tagen gemocht, absteigend; ersetzt „Meine Favoriten“). Kopf im Stapel: „Heute N ♥“ (Tipp → Profil). Karte: Badge „♥ N×“ ab 2 Tagen.
+- **Tabelle `swipe_days`** `(guest_id, slug, day, verdict, recipe_name, category, swiped_at)`, PK `(guest_id, slug, day)`: ein Eintrag je Gast, Gericht und Tag. **`verdicts` bleibt der Dauerstand** für Matches, Gruppen, Abend-Modus, Trending, Admin. Ein Nö überschreibt dort kein like/super mehr (`applySwipeVerdict`), sonst verschwände ein Favorit aus Matches, nur weil man heute keine Lust hatte.
+- **Migration** läuft automatisch beim ersten DB-Zugriff nach dem Deploy (`migrate()` in `db.ts`, gezählt über `PRAGMA user_version`, jetzt 1): je `verdicts`-Zeile ein Tageseintrag am Tag von `updated_at` → alte Likes zählen als „1×“. `verdicts` wird nicht verändert. Personen löschen (Admin) räumt `swipe_days` mit ab.
+- **Sync:** localStorage `rezepte-heute-v1` = `{ from, days: { day: { slug: {v, at} } }, before }` ist Quelle für die UI, Server ist Quelle der Wahrheit. `/api/me` liefert die Tage vorgestern…morgen einzeln und davor nur die Zählung (`likeCountsBefore`); eigene, noch nicht bestätigte Swipes (Sitzung + `rezepte-pending-v1`) gewinnen. Swipes schicken `day` + `swipedAt` mit; der Server nimmt `day` nur im Fenster vorgestern…morgen an (spät nachgeschickt, Uhr daneben), sonst heute. Pending-Schlüssel jetzt `slug|day`.
+- **Test ohne Warten:** headless mit Fake-Uhr (CDP `Page.addScriptToEvaluateOnNewDocument` ersetzt `Date`), Uhrzeit 17.10. 20:00 → 18.10. 04:01. `day.ts` bekommt deshalb immer ein konkretes `Date`. Kein Test-Schalter im App-Code.
+
+## Design-Runde und Home-Bildschirm-App (heute-gemerkt-1018, 17.10.2026)
+
+- **Kontrast:** `--text-muted` `#776854` (4,7 : 1 Creme, 5,4 : 1 Weiß; auf `--surface-hover` nur 4,4). Für Deko (leere Sterne, Kreisränder) `--text-faint`.
+- **Dunkelmodus-Leck:** `@custom-variant dark (&:where(.dark, .dark *))` in `globals.css`; ohne das schaltet Tailwind v4 `dark:` über die Systemeinstellung, obwohl die App fest hell ist.
+- **Detail:** Zeit + Portionen als ruhige Zeile über den Zutaten (`fmtPortions`), Beschreibung ganz, Schritte offen in 16 px/1,6, alle Tippziele ≥ 44 px (gemessen 0 von 16 darunter, vorher 12). Destruktives fragt per `useConfirm()` (Portal an `<body>`, kein `window.confirm`): Gruppe verlassen, Abmelden, Koch-Eintrag löschen.
+- **Raster:** Hero alle 7 statt 6 (+ `grid-flow-dense`) → bei 2 Spalten keine Löcher (vorher 31).
+- **Home-Bildschirm-App, Leiste zu hoch beim Start (iOS 26):** WebKit meldet beim Start eine um ~60 pt zu kurze Viewport-Höhe, bis man scrollt/tippt; `100dvh` und `position: fixed; bottom` hängen beide daran, der 1-px-Scroll-Trick von 7ec0d2a reichte nicht. Jetzt: Inline-Skript im `<head>` setzt in der Standalone-App `html.standalone` + `--screen-h` (= `screen.height`, kein Messen des Viewports); `.app-h` = `max(100dvh, min(--screen-h, 100dvh + 2 × safe-area-top))`; Leiste, Suche und Ausblender sind `absolute` im App-Rahmen statt `fixed`. Ohne Statusleisten-Abstand (inset-top 0) bleibt es exakt bei 100dvh. **Nur headless simuliert, am iPhone bestätigen.** Sheets (`fixed inset-0`) hängen weiter am Viewport.
+- **Kopf in Raster/Profil** scrollt jetzt mit dem Inhalt; oben bleibt nur ein Ausblender in Höhe Statusleiste + 14 px (vorher lag ein hoher Verlauf über Titel und Chips).
+- **Messskripte** (CDP, `render-chrome`, 390×844 @3x, Touch, `Emulation.setSafeAreaInsetsOverride` 59/34): nicht im Repo; Screenshots vorher/nachher lagen beim Bau in `docs/heute-gemerkt/` (nicht eingecheckt).
 
 ## Konventionen
 
