@@ -20,7 +20,7 @@ import kartenbildListe from "@/lib/kartenbild.json";
 import { recipeStore, recipeImagesDir, type StoredRecipe } from "@/lib/recipeStore";
 
 /**
- * Rezept-Quelle (seit 18.10.2026): `obsidian` liest den RO-Mount wie bisher, `db` die
+ * Rezept-Quelle (seit 17.10.2026): `obsidian` liest den RO-Mount wie bisher, `db` die
  * Rezept-Datenbank in DATA_DIR/rezepte.db (Bilder in DATA_DIR/bilder, gleiche Dateinamen).
  * Umschalten per Stack-Env RECIPE_SOURCE, Rückweg = Variable zurück. Plan: docs/plan-datenbank.md
  */

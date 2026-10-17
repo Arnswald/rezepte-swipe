@@ -10,7 +10,7 @@
  * WICHTIG: Die App schreibt NIE in den Vault (read-only). Das Einsortieren nach
  * Obsidian macht n8n auf dem Server. Diese Route fasst nur DATA_DIR an.
  *
- * Mit RECIPE_SOURCE=db (seit 18.10.2026) legt die Route zusätzlich sofort einen Datensatz
+ * Mit RECIPE_SOURCE=db (seit 17.10.2026) legt die Route zusätzlich sofort einen Datensatz
  * in der Rezept-Datenbank an (status „eingereicht“, der Gast sieht ihn im Profil):
  *  - Link / Sprache: Platzhalter, n8n bekommt `einreichung: <slug>` und füllt ihn über
  *    /api/admin/recipes/import

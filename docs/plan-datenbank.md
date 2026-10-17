@@ -1,6 +1,6 @@
 # Rezepte aus der Datenbank statt aus Obsidian — Plan
 
-Stand 18.10.2026: **gebaut und lokal geprüft** (Phase 1–3). Umschalten (Phase 4) über
+Stand 17.10.2026: **gebaut und lokal geprüft** (Phase 1–3). Umschalten (Phase 4) über
 `RECIPE_SOURCE=db` im Stack. Offene Entscheidungen von Christian beantwortet: Server-Schlüssel ok,
 Kategorien wie gehabt (9 im Enum, 3 Gruppen in der App), eigene Telegram-Links direkt veröffentlichen
 (wenn die Prüfung ok ist), Formular-Einreichungen weiter von Claude aufbereiten lassen.
@@ -10,7 +10,7 @@ für den Vault), die App parst es mit `parseRecipeMarkdown()`. So bleibt der Pro
 und neue n8n-Workflows (10c, 14b) ersetzen nur das Ende. Gebaut von
 `n8n-automationen/werkzeuge/rezepte_auf_app_umstellen.py`.
 
-## Entscheidungen (Christian, 18.10.2026)
+## Entscheidungen (Christian, 17.10.2026)
 
 1. **Gemeinsamer Pool.** Alle sehen Christians Rezepte und freigegebene Einreichungen. Wer einreicht, sieht seine Einreichung sofort selbst, andere erst nach Freigabe.
 2. **Datenbank ist führend.** Die 187 Rezepte werden einmal samt Bildern übernommen. Obsidian bekommt später eine Kopie (Export), wird aber nicht mehr gelesen.
@@ -49,7 +49,7 @@ Ein Betreiber, wenig Last, ein Schreibweg (die App): Postgres bringt hier nur Wa
 
 **Felder je Rezept** zusätzlich zu den heutigen: `status` (veroeffentlicht | eingereicht | abgelehnt), `status_grund`, `quelle_url`, `quelle_key`, `plattform`, `herkunft` (obsidian | link | formular | sprache | admin), `eingereicht_von` (guestId), `eingereicht_name`, `pruefung` (JSON), `bildfokus`, `kartenbild`, `obsidian_datei` / `obsidian_original` / `obsidian_hash` / `obsidian_export_hash`, `erstellt_am`, `geaendert_am`, `freigegeben_am`. Das komplette Original-Markdown wird mitgespeichert, damit nichts verloren geht („Meine Notizen“, „Selbst gekocht“, Quelle-Zeilen im Body).
 
-### Probelauf 18.10.2026 (lokal, Scratchpad)
+### Probelauf 17.10.2026 (lokal, Scratchpad)
 
 - 187 Markdown-Dateien → 187 Rezepte, 0 Parser-Fehler, alle veröffentlicht, keine Dubletten über die Quelle
 - Rundreise: 187/187 Rezepte in allen 21 Feldern gleich mit `parseRecipeFile()`
@@ -135,7 +135,7 @@ Kleinste sinnvolle Lieferung: Phase 1 + Phase 4 Schritte 1–4 (≈ 5 h). Danach
 - **Groß/klein auf dem Mac:** `resolveImageFile("Protein-Pancakes.png")` liefert auf dem Mac die Frontmatter-Schreibweise, im Linux-Container den echten Namen `protein-pancakes.png`. Die DB speichert den echten Namen (wie live).
 - **Lokales `main` war hinter `origin/main`** (90a7c41 Kartenbild fehlte). Vor dem Vergleich mit live immer `git fetch` und auf `origin/main` aufsetzen.
 - **Node lädt die TS-Module direkt** (Typ-Stripping ab 23.6), braucht aber den Alias-Hook `tools/ts-laden.mjs`; JSON-Importe ohne `with { type: "json" }` lädt der Hook als Modul.
-- **Platte voll:** Am 18.10.2026 waren auf dem Mac nur noch 149 MB frei, `npm ci` im Worktree brach mit ENOSPC ab. Worktrees deshalb mit Symlink auf das `node_modules` des Hauptrepos; Bilder werden per APFS-Klon kopiert (`COPYFILE_FICLONE`, kostet keinen Platz).
-- **iCloud lagert Rezepte aus:** Am 18.10.2026 waren 155 von 188 Rezeptdateien auf dem Mac nur „dataless“ (Platzmangel). `readFileSync` blockiert dann den ganzen Next-Prozess, bis iCloud lädt, und das kam aus der Sitzung nie. Prüfen mit `ls -lO | grep dataless`. Lokale Tests mit einer Teilmenge (nur lokal vorhandene Dateien), der echte Import läuft auf dem Server (Syncthing hat alles). Der Mac-Runner prüft vor dem Lesen per `stat -f %Sf` und überspringt ausgelagerte Dateien.
+- **Platte voll:** Am 17.10.2026 waren auf dem Mac nur noch 149 MB frei, `npm ci` im Worktree brach mit ENOSPC ab. Worktrees deshalb mit Symlink auf das `node_modules` des Hauptrepos; Bilder werden per APFS-Klon kopiert (`COPYFILE_FICLONE`, kostet keinen Platz).
+- **iCloud lagert Rezepte aus:** Am 17.10.2026 waren 155 von 188 Rezeptdateien auf dem Mac nur „dataless“ (Platzmangel). `readFileSync` blockiert dann den ganzen Next-Prozess, bis iCloud lädt, und das kam aus der Sitzung nie. Prüfen mit `ls -lO | grep dataless`. Lokale Tests mit einer Teilmenge (nur lokal vorhandene Dateien), der echte Import läuft auf dem Server (Syncthing hat alles). Der Mac-Runner prüft vor dem Lesen per `stat -f %Sf` und überspringt ausgelagerte Dateien.
 - **Turbopack und verlinktes node_modules:** Im Worktree mit Symlink auf `../rezepte-swipe/node_modules` bricht `next dev` mit „Symlink … points out of the filesystem root“ ab. Lokal `next dev --webpack` nehmen; CI baut im echten Checkout und ist nicht betroffen.
-- **Link-Webhook fehlte im Stack:** `N8N_LINK_WEBHOOK` stand bis 18.10.2026 nicht im Rezepte-Stack, Links aus der App gingen nie an n8n. Und in WF10b/WF14 stand statt der Chat-ID der Platzhalter `DEINE_TELEGRAM_CHAT_ID`: Telegram-Hinweise zu App-Einreichungen kamen nie an. Beides mit dem Umbau behoben.
+- **Link-Webhook fehlte im Stack:** `N8N_LINK_WEBHOOK` stand bis 17.10.2026 nicht im Rezepte-Stack, Links aus der App gingen nie an n8n. Und in WF10b/WF14 stand statt der Chat-ID der Platzhalter `DEINE_TELEGRAM_CHAT_ID`: Telegram-Hinweise zu App-Einreichungen kamen nie an. Beides mit dem Umbau behoben.

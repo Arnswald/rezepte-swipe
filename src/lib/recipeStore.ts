@@ -1,5 +1,5 @@
 /**
- * Rezept-Datenbank (Entwurf, 18.10.2026) — NOCH NIRGENDS IMPORTIERT.
+ * Rezept-Datenbank (Entwurf, 17.10.2026) — NOCH NIRGENDS IMPORTIERT.
  *
  * Löst später den Obsidian-Ordner als Rezeptquelle ab. Die Datenbank ist dann führend,
  * Obsidian bekommt nur noch eine Kopie (Export vom Mac aus, siehe docs/plan-datenbank.md).
@@ -27,7 +27,7 @@
  * (eigener Bereich „rezepte“, damit `PRAGMA user_version` für db.ts frei bleibt).
  * Neue Spalten später als Schritt `version < N` in migrate() ergänzen, nie bestehende ändern.
  *
- * Sichtbarkeit (Entscheidung Christian, 18.10.2026):
+ * Sichtbarkeit (Entscheidung Christian, 17.10.2026):
  *  - alle sehen `veroeffentlicht` (Christians Rezepte + freigegebene Einreichungen)
  *  - wer einreicht, sieht seine `eingereicht`-Rezepte sofort selbst (eingereicht_von = guestId)
  *  - `abgelehnt` sieht nur der Admin

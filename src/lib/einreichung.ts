@@ -1,5 +1,5 @@
 /**
- * Einreichungen in die Rezept-Datenbank (seit 18.10.2026).
+ * Einreichungen in die Rezept-Datenbank (seit 17.10.2026).
  *
  * Drei Wege, ein Ende:
  *  - Gast reicht in der App einen Link, ein Formular oder eine Sprachnachricht ein

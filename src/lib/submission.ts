@@ -1,5 +1,5 @@
 /**
- * Einreichung per Link — Prüflogik (Entwurf, 18.10.2026) — NOCH NICHT VERDRAHTET.
+ * Einreichung per Link — Prüflogik (Entwurf, 17.10.2026) — NOCH NICHT VERDRAHTET.
  *
  * Reine Funktionen ohne Datenbank- oder Netzwerkzugriff: Plattform erkennen, Quelle
  * normalisieren, Slug bilden, ausgelesenes Rezept auf Plausibilität prüfen, Dubletten finden.

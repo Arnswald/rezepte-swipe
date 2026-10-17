@@ -38,7 +38,7 @@ gesetzt sein — siehe `DEPLOYMENT.md`.
 
 ## Architektur / Datenfluss
 
-**Seit 18.10.2026: Rezept-Datenbank.** Schalter `RECIPE_SOURCE` (`obsidian` | `db`). Mit `db`
+**Seit 17.10.2026: Rezept-Datenbank.** Schalter `RECIPE_SOURCE` (`obsidian` | `db`). Mit `db`
 liest die App `DATA_DIR/rezepte.db` (Tabellen `recipes`, `recipe_images`) und die Bilder aus
 `DATA_DIR/bilder`; der Vault bekommt nur noch eine Kopie. Plan und Begründung:
 `docs/plan-datenbank.md`.
@@ -63,7 +63,7 @@ Einreichung (Gast: Link/Formular/Sprache)      Christian: Link per Telegram
      · Brücke: import-obsidian holt Rezepte, die noch direkt im Vault landen
 ```
 
-Bis 18.10.2026 (und mit `RECIPE_SOURCE=obsidian`):
+Bis 17.10.2026 (und mit `RECIPE_SOURCE=obsidian`):
 
 ```
 Obsidian-Vault (Christians Kochbuch)

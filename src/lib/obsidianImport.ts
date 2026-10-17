@@ -1,5 +1,5 @@
 /**
- * Einmalige Übernahme des Obsidian-Kochbuchs in die Rezept-Datenbank (Entwurf, 18.10.2026).
+ * Einmalige Übernahme des Obsidian-Kochbuchs in die Rezept-Datenbank (Entwurf, 17.10.2026).
  * NOCH NIRGENDS IN DER APP IMPORTIERT.
  *
  * Zwei Aufrufer:

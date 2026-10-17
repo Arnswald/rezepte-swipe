@@ -2925,7 +2925,7 @@ export default function RezeptePage() {
   useEffect(() => { filteredRef.current = filtered; }, [filtered]);
 
   // ── Swipe-Stapel (Snapshot) ────────────────────────────────────────
-  // „Heute gemerkt“ (seit 18.10.2026): der Stapel zeigt ALLE Rezepte außer denen, die
+  // „Heute gemerkt“ (seit 17.10.2026): der Stapel zeigt ALLE Rezepte außer denen, die
   // heute schon bewertet wurden (rechts, links oder hoch). „Nö“ gilt nur für heute —
   // ab 4:00 Uhr am nächsten Tag ist alles wieder drin (dayInfo.today wechselt).
   // Snapshot = stabile Reihenfolge beim Wischen.
