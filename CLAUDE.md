@@ -146,7 +146,7 @@ mergen will: `kategorie:`-Frontmatter in `06 Research/Gerichte/*.md` ändern.
 
 ## Deployment
 
-- **CI**: Push auf `main` → GitHub Actions baut Docker-Image → **GHCR**
+- **CI**: Push auf `main` → GitHub Actions baut Docker-Image → **GHCR**; danach `node tools/ausrollen.mjs` (Stack 10 neu ziehen)
   (`ghcr.io/arnswald/rezepte-swipe:latest`) → triggert optional den
   Portainer-Redeploy-Webhook (`PORTAINER_WEBHOOK_URL` als Repo-Secret).
 - **Host**: Umbrel (Portainer, lokal `192.168.2.201:9000`), Cloudflare Tunnel
