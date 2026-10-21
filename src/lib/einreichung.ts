@@ -73,7 +73,7 @@ export async function bildLaden(b: BildQuelle | null | undefined): Promise<Buffe
  * ist der Name schon belegt, kommt eine Endung dazu: Cloudflare hält Bild-URLs lange im
  * Cache, ein überschriebenes Bild unter altem Namen bliebe dort alt.
  */
-export async function bildSpeichern(slug: string, buf: Buffer, opts: { ki?: boolean; herkunftUrl?: string | null } = {}): Promise<ImageInput> {
+export async function bildSpeichern(slug: string, buf: Buffer, opts: { ki?: boolean; herkunftUrl?: string | null; zusatz?: string } = {}): Promise<ImageInput> {
   const { data, info } = await sharp(buf)
     .rotate()
     .resize({ width: 2000, height: 2000, fit: "inside", withoutEnlargement: true })
@@ -81,9 +81,12 @@ export async function bildSpeichern(slug: string, buf: Buffer, opts: { ki?: bool
     .toBuffer({ resolveWithObject: true });
   const dir = recipeImagesDir();
   mkdirSync(dir, { recursive: true });
-  const basis = `${slug}${opts.ki ? "_KI" : ""}`;
-  let datei = `${basis}.jpg`;
-  if (existsSync(join(dir, datei))) datei = `${basis}-${Date.now().toString(36)}.jpg`;
+  // <slug>[_zusatz][_KI].jpg; ist der Name belegt, kommt die Zeitmarke VOR „_KI“, damit die
+  // Endung `_KI.jpg` (Kennzeichen „KI-Bild“ in der Galerie) erhalten bleibt.
+  const stamm = `${slug}${opts.zusatz ? `_${opts.zusatz}` : ""}`;
+  const ende = `${opts.ki ? "_KI" : ""}.jpg`;
+  let datei = `${stamm}${ende}`;
+  if (existsSync(join(dir, datei))) datei = `${stamm}-${Date.now().toString(36)}${ende}`;
   writeFileSync(join(dir, datei), data);
   return {
     rolle: "titel",
