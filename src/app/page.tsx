@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { preload, createPortal } from "react-dom";
-import { motion, AnimatePresence, useReducedMotion, useMotionValue, useTransform, animate, useDragControls } from "framer-motion";
+import { motion, AnimatePresence, useReducedMotion, useMotionValue, useTransform, animate } from "framer-motion";
 import {
   Loader2, ChevronRight, ChevronDown, Clock, Users, Flame,
   X, ExternalLink, AlertCircle, Check,
@@ -24,7 +24,6 @@ import { NumberFlow } from "@/components/ui/NumberFlow";
 import { Lens } from "@/components/ui/Lens";
 import { AnimatedInput } from "@/components/ui/AnimatedInput";
 import { useToast } from "@/components/ui/Toast";
-import { ShareButton } from "@/components/ShareButton";
 import { dayKey, shiftDay, showYesterday } from "@/lib/day";
 
 // ── Types ─────────────────────────────────────────────────────
@@ -259,12 +258,14 @@ const CATEGORY_EMOJI: Record<string, string> = {
   "Salat": "🥗",
 };
 
-// Filter nur in drei Gruppen (Christian 09.10.): Frühstück, Gerichte, Dessert.
-// Soßen, Beilagen, Salate, Snacks, Getränke zählen zu „Gerichte“; die Karte zeigt weiter die echte Kategorie.
-const CAT_GROUPS = ["Frühstück", "Gerichte", "Dessert"] as const;
-const CAT_GROUP_EMOJI: Record<string, string> = { "Frühstück": "🍳", "Gerichte": "🍽️", "Dessert": "🍰" };
+// Filter in vier Gruppen (21.10.2026, vorher drei): Unter „Gerichte“ standen auch Soßen, Beilagen
+// und Snacks und passten beim Filtern nicht. Salate zählen zum Hauptgang (meist Bowls).
+// Die Karte zeigt weiter die echte Kategorie aus dem Rezept.
+const CAT_GROUPS = ["Frühstück", "Hauptgang", "Snacks & Co", "Dessert"] as const;
 function catGroup(cat: string): string {
-  return cat === "Frühstück" || cat === "Dessert" ? cat : "Gerichte";
+  if (cat === "Frühstück" || cat === "Dessert") return cat;
+  if (cat === "Hauptgericht" || cat === "Salat" || cat === "Suppe") return "Hauptgang";
+  return "Snacks & Co";
 }
 
 // Kürzere Anzeige-Labels für die Filter-Pills (Frontmatter im Vault bleibt unverändert).
@@ -408,9 +409,10 @@ function InfoPill({ icon: Icon, children }: { icon?: React.ComponentType<{ class
 }
 
 function RecipeCardFace({
-  r, index, total, onOpen, onImageLoad, likeCount = 0, likedToday = false,
+  r, index, total, onOpen, onImageLoad, likeCount = 0, likedToday = false, priority = "high",
 }: {
   r: Recipe; index: number; total: number; onOpen: () => void; animateMacros?: boolean; onImageLoad?: () => void;
+  priority?: "high" | "auto";
   /** an wie vielen Tagen schon gemocht (Badge ab 2) */
   likeCount?: number;
   /** heute schon nach rechts/hoch (nur bei „Nochmal alle ansehen“ im Stapel) */
@@ -432,20 +434,20 @@ function RecipeCardFace({
         aria-label={`${r.name} öffnen`}
         className="relative block w-full flex-1 min-h-0 rounded-2xl overflow-hidden bg-surface-elevated"
       >
-        <RecipeImage r={r} shape="card" sizes={CARD_SIZES} eager priority="high" onLoad={onImageLoad} className="absolute inset-0 w-full h-full object-cover pointer-events-none" />
+        <RecipeImage r={r} shape="card" sizes={CARD_SIZES} eager priority={priority} onLoad={onImageLoad} className="absolute inset-0 w-full h-full object-cover pointer-events-none" />
         {(likeCount >= 2 || likedToday) && (
           <span className="absolute top-2 left-2 flex items-center gap-1.5 pointer-events-none">
             {likeCount >= 2 && (
-              <span className="px-2 py-1 rounded-full bg-black/45 backdrop-blur-sm text-white text-[12px] font-semibold tabular-nums flex items-center gap-1">
+              <span className="px-2 py-1 rounded-full bg-black/55 text-white text-[12px] font-semibold tabular-nums flex items-center gap-1">
                 <Heart className="w-3 h-3 fill-white" /> {likeCount}×
               </span>
             )}
             {likedToday && (
-              <span className="px-2 py-1 rounded-full bg-[#3f6b43]/85 backdrop-blur-sm text-white text-[12px] font-semibold">Heute gemerkt</span>
+              <span className="px-2 py-1 rounded-full bg-[#3f6b43]/90 text-white text-[12px] font-semibold">Heute gemerkt</span>
             )}
           </span>
         )}
-        <span className="absolute bottom-2 right-2 px-2 py-1 rounded-full bg-black/45 backdrop-blur-sm text-white text-[10px] font-semibold flex items-center gap-0.5 pointer-events-none">
+        <span className="absolute bottom-2 right-2 px-2 py-1 rounded-full bg-black/55 text-white text-[10px] font-semibold flex items-center gap-0.5 pointer-events-none">
           Rezept <ChevronRight className="w-3 h-3" />
         </span>
       </button>
@@ -542,36 +544,15 @@ function SwipeDeck({
 
   if (!current) return null;
 
-  const back = [1, 2].map((offset) => recipes[index + offset]).filter(Boolean) as Recipe[];
+  // Vorne + zwei dahinter, in EINER Liste mit dem Slug als Schlüssel (21.10.2026): Rückt eine
+  // Karte nach vorne, bleibt sie dasselbe Element mit demselben, schon dekodierten Bild. Vorher
+  // waren hintere Karten und vordere Karte getrennte Bäume; die nachrückende Karte wurde neu
+  // aufgebaut, das Bild kam einen Moment später und sprang dann nach vorne.
+  const visible = recipes.slice(index, index + 3);
 
   return (
     <div className="flex flex-col h-full min-h-0">
       <div className="relative flex-1 min-h-0" style={{ touchAction: "pan-y" }}>
-        {/* Hintere Karten */}
-        {back.reverse().map((recipe, i) => {
-          const offset = back.length - i; // 2 dann 1
-          return (
-            <motion.div
-              key={recipe.slug}
-              className="absolute inset-0"
-              initial={false}
-              animate={{ scale: 1 - offset * 0.05, y: offset * 12, opacity: 1 - offset * 0.12 }}
-              transition={prefersReduced ? { duration: 0 } : { type: "spring", stiffness: 300, damping: 30 }}
-              style={{ zIndex: 10 - offset, transformOrigin: "top center" }}
-            >
-              {/* schlichte Tiefe-Karte im gleichen weißen Look */}
-              <div className="bg-surface rounded-[26px] shadow-[0_10px_30px_rgba(70,50,30,0.10)] border border-border p-3 h-full flex flex-col">
-                <div className="h-4 shrink-0" />
-                <div className="relative w-full flex-1 min-h-0 rounded-2xl overflow-hidden bg-surface-elevated">
-                  <RecipeImage r={recipe} shape="card" sizes={CARD_SIZES} eager className="absolute inset-0 w-full h-full object-cover" />
-                  <div className="absolute inset-0 bg-black/5" />
-                </div>
-                <div className="h-24 shrink-0" />
-              </div>
-            </motion.div>
-          );
-        })}
-
         {/* Vorausladen: die drei Karten hinter dem sichtbaren Stapel, gleiche URLs wie die
             Karte selbst (srcset/sizes), niedrige Priorität — die vorderste Karte geht vor. */}
         <div aria-hidden className="absolute w-px h-px overflow-hidden opacity-0 pointer-events-none">
@@ -580,45 +561,60 @@ function SwipeDeck({
           ))}
         </div>
 
-        {/* Vorderste Karte — beide Achsen draggable */}
-        <motion.div
-          key={current.slug}
-          className="relative w-full h-full select-none"
-          style={{ x, y, rotate, zIndex: 20, transformOrigin: "top center" }}
-          drag={prefersReduced ? false : true}
-          dragConstraints={{ left: 0, right: 0, top: 0, bottom: 0 }}
-          dragElastic={0.55}
-          whileDrag={{ cursor: "grabbing" }}
-          onDragEnd={(_, info) => {
-            const up = info.offset.y < -110 && Math.abs(info.offset.y) > Math.abs(info.offset.x);
-            if (up || info.velocity.y < -700) { commit("super"); return; }
-            if (info.offset.x > 100 || info.velocity.x > 500) { commit("like"); return; }
-            if (info.offset.x < -100 || info.velocity.x < -500) { commit("nope"); return; }
-            springBack();
-          }}
-        >
-          {/* Verdict-Stamps — mittig, damit sie beim Wischen nicht aus dem Bild wandern */}
-          <motion.div style={{ opacity: likeOp }} className="absolute top-24 left-1/2 -translate-x-1/2 z-30 rotate-[8deg] px-4 py-1.5 rounded-2xl border-[4px] border-[#57a75f] text-[#57a75f] text-[2.1rem] font-black uppercase tracking-wide pointer-events-none bg-white/25 backdrop-blur-[2px]">
-            Lecker
-          </motion.div>
-          <motion.div style={{ opacity: nopeOp }} className="absolute top-24 left-1/2 -translate-x-1/2 z-30 -rotate-[8deg] px-4 py-1.5 rounded-2xl border-[4px] border-[#bd5138] text-[#bd5138] text-[2.1rem] font-black uppercase tracking-wide pointer-events-none bg-white/25 backdrop-blur-[2px]">
-            Nö
-          </motion.div>
-          <motion.div style={{ opacity: superOp }} className="absolute left-1/2 -translate-x-1/2 top-1/3 z-30 -rotate-[6deg] px-3 py-1.5 rounded-xl border-[3px] border-[#d99a2b] text-[#d99a2b] text-xl font-black uppercase tracking-wide pointer-events-none flex items-center gap-1.5">
-            <Star className="w-5 h-5 fill-[#d99a2b]" /> Superlike
-          </motion.div>
+        {visible.map((recipe, pos) => {
+          const front = pos === 0;
+          return (
+            <motion.div
+              key={recipe.slug}
+              className="absolute inset-0"
+              initial={false}
+              animate={{ scale: 1 - pos * 0.05, y: pos * 12, opacity: 1 - pos * 0.12 }}
+              transition={prefersReduced ? { duration: 0 } : { type: "spring", stiffness: 300, damping: 30 }}
+              style={{ zIndex: 20 - pos, transformOrigin: "top center" }}
+              aria-hidden={!front || undefined}
+            >
+              <motion.div
+                className={`relative w-full h-full select-none ${front ? "" : "pointer-events-none"}`}
+                style={front ? { x, y, rotate, transformOrigin: "top center" } : undefined}
+                drag={front && !prefersReduced}
+                dragConstraints={{ left: 0, right: 0, top: 0, bottom: 0 }}
+                dragElastic={0.55}
+                whileDrag={{ cursor: "grabbing" }}
+                onDragEnd={(_, info) => {
+                  if (!front) return;
+                  const up = info.offset.y < -110 && Math.abs(info.offset.y) > Math.abs(info.offset.x);
+                  if (up || info.velocity.y < -700) { commit("super"); return; }
+                  if (info.offset.x > 100 || info.velocity.x > 500) { commit("like"); return; }
+                  if (info.offset.x < -100 || info.velocity.x < -500) { commit("nope"); return; }
+                  springBack();
+                }}
+              >
+                {/* Verdict-Stamps — mittig, damit sie beim Wischen nicht aus dem Bild wandern.
+                    Auch hinten vorhanden (unsichtbar), damit die Karte beim Nachrücken gleich bleibt. */}
+                <motion.div style={{ opacity: front ? likeOp : 0 }} className="absolute top-24 left-1/2 -translate-x-1/2 z-30 rotate-[8deg] px-4 py-1.5 rounded-2xl border-[4px] border-[#57a75f] text-[#57a75f] text-[2.1rem] font-black uppercase tracking-wide pointer-events-none bg-white/25">
+                  Lecker
+                </motion.div>
+                <motion.div style={{ opacity: front ? nopeOp : 0 }} className="absolute top-24 left-1/2 -translate-x-1/2 z-30 -rotate-[8deg] px-4 py-1.5 rounded-2xl border-[4px] border-[#bd5138] text-[#bd5138] text-[2.1rem] font-black uppercase tracking-wide pointer-events-none bg-white/25">
+                  Nö
+                </motion.div>
+                <motion.div style={{ opacity: front ? superOp : 0 }} className="absolute left-1/2 -translate-x-1/2 top-1/3 z-30 -rotate-[6deg] px-3 py-1.5 rounded-xl border-[3px] border-[#d99a2b] text-[#d99a2b] text-xl font-black uppercase tracking-wide pointer-events-none flex items-center gap-1.5">
+                  <Star className="w-5 h-5 fill-[#d99a2b]" /> Superlike
+                </motion.div>
 
-          <RecipeCardFace
-            r={current}
-            index={index}
-            total={recipes.length}
-            onOpen={() => onOpen(current)}
-            animateMacros={!prefersReduced}
-            onImageLoad={() => setPrimed(true)}
-            likeCount={likeCounts?.[current.slug] ?? 0}
-            likedToday={isLike(todayMap?.[current.slug]?.v)}
-          />
-        </motion.div>
+                <RecipeCardFace
+                  r={recipe}
+                  index={index + pos}
+                  total={recipes.length}
+                  onOpen={() => onOpen(recipe)}
+                  priority={front ? "high" : "auto"}
+                  onImageLoad={front ? () => setPrimed(true) : undefined}
+                  likeCount={likeCounts?.[recipe.slug] ?? 0}
+                  likedToday={isLike(todayMap?.[recipe.slug]?.v)}
+                />
+              </motion.div>
+            </motion.div>
+          );
+        })}
       </div>
 
       {/* Action-Buttons — Swipe-for-Dinner-Stil, fix unter dem Deck */}
@@ -825,7 +821,7 @@ function GalleryHeader({ r }: { r: Recipe }) {
           </div>
         ))}
       </div>
-      <div className="absolute bottom-14 left-1/2 -translate-x-1/2 z-20 flex gap-1.5 pointer-events-none">
+      <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-20 flex gap-1.5 pointer-events-none">
         {imgs.map((_, i) => (
           <span key={i} className={`h-1.5 rounded-full transition-all ${i === active ? "w-5 bg-white" : "w-1.5 bg-white/50"}`} />
         ))}
@@ -971,13 +967,54 @@ function RecipeDetail({
   const [cookDate, setCookDate] = useState(todayISO());
   const [ask, confirmDialog] = useConfirm();
   const prefersReduced = useReducedMotion();
-  // Wie ein iOS-Sheet: am Griff oben nach unten ziehen schließt
-  const dragControls = useDragControls();
-
+  const [descOpen, setDescOpen] = useState(false);
+  // Wie ein iOS-Sheet (21.10.2026): Steht der Inhalt ganz oben, schließt Nach-unten-Ziehen
+  // von ÜBERALL im Fenster, nicht nur am Griff. Eigene Touch-Logik statt framer-drag, damit
+  // normales Scrollen im Rezept nicht abgefangen wird.
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const pullY = useMotionValue(0);
+  const backdropOp = useTransform(pullY, [0, 320], [1, 0.35]);
   useEffect(() => {
     document.body.style.overflow = "hidden";
     return () => { document.body.style.overflow = ""; };
   }, []);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || prefersReduced) return;
+    let startY = 0, startT = 0, pulling = false, tracking = false;
+    const onStart = (e: TouchEvent) => {
+      tracking = el.scrollTop <= 0;
+      pulling = false;
+      startY = e.touches[0].clientY;
+      startT = performance.now();
+    };
+    const onMove = (e: TouchEvent) => {
+      if (!tracking) return;
+      const dy = e.touches[0].clientY - startY;
+      if (!pulling && dy > 6 && el.scrollTop <= 0) pulling = true;
+      if (!pulling) { if (dy < 0) tracking = false; return; }
+      e.preventDefault();
+      pullY.set(Math.max(0, dy * 0.9));
+    };
+    const onEnd = () => {
+      if (!pulling) return;
+      const dy = pullY.get();
+      const v = dy / Math.max(1, performance.now() - startT);
+      pulling = false;
+      if (dy > 110 || v > 0.6) onClose();
+      else animate(pullY, 0, { type: "spring", stiffness: 420, damping: 36 });
+    };
+    el.addEventListener("touchstart", onStart, { passive: true });
+    el.addEventListener("touchmove", onMove, { passive: false });
+    el.addEventListener("touchend", onEnd);
+    el.addEventListener("touchcancel", onEnd);
+    return () => {
+      el.removeEventListener("touchstart", onStart);
+      el.removeEventListener("touchmove", onMove);
+      el.removeEventListener("touchend", onEnd);
+      el.removeEventListener("touchcancel", onEnd);
+    };
+  }, [onClose, pullY, prefersReduced]);
 
   const toggle = (key: string) => {
     setChecked((prev) => {
@@ -998,46 +1035,52 @@ function RecipeDetail({
         initial={{ opacity: prefersReduced ? 1 : 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
-        className="absolute inset-0 bg-black/70"
+        className="absolute inset-0"
         onClick={onClose}
-      />
+      >
+        <motion.div className="absolute inset-0 bg-black/70" style={{ opacity: backdropOp }} />
+      </motion.div>
       <motion.div
         initial={{ y: prefersReduced ? 0 : "100%" }}
         animate={{ y: 0 }}
         exit={{ y: prefersReduced ? 0 : "100%" }}
         transition={prefersReduced ? { duration: 0 } : { type: "spring", damping: 34, stiffness: 300 }}
-        drag={prefersReduced ? false : "y"}
-        dragListener={false}
-        dragControls={dragControls}
-        dragConstraints={{ top: 0, bottom: 0 }}
-        dragElastic={{ top: 0, bottom: 0.7 }}
-        onDragEnd={(_, info) => { if (info.offset.y > 110 || info.velocity.y > 600) onClose(); }}
-        className="relative w-full sm:max-w-lg max-h-[calc(100dvh-env(safe-area-inset-top)-10px)] overflow-y-auto overscroll-contain bg-surface sm:rounded-2xl rounded-t-[22px] border border-border"
+        className="relative w-full sm:max-w-lg"
       >
-        {/* Griff: hier anfassen und nach unten ziehen */}
-        <div
-          onPointerDown={(e) => dragControls.start(e)}
-          className="absolute inset-x-0 top-0 z-30 h-9 flex justify-center pt-2 touch-none cursor-grab"
-          aria-hidden
-        >
-          <span className="w-10 h-[5px] rounded-full bg-white/80 shadow-sm" />
+      <motion.div
+        ref={scrollRef}
+        style={{ y: pullY }}
+        className="relative w-full h-[calc(100dvh-env(safe-area-inset-top)-10px)] sm:h-auto sm:max-h-[90dvh] overflow-y-auto overscroll-contain bg-surface sm:rounded-2xl rounded-t-[22px] border border-border"
+      >
+        {/* Griff als Hinweis: das ganze Fenster lässt sich nach unten wegziehen */}
+        <div className="flex justify-center pt-2 pb-1" aria-hidden>
+          <span className="w-10 h-[5px] rounded-full bg-text-faint/60" />
         </div>
-        {/* Schließen-Knopf klebt oben — bei langen Rezepten sonst nur ganz oben/unten erreichbar */}
-        <div className="sticky top-0 z-40 h-0">
+
+        {/* Kopf (21.10.2026): Titel und Beschreibung oben, Bilder darunter in Daumenhöhe */}
+        <div className="px-4 pt-1 flex items-start gap-3">
+          <h2 className="flex-1 min-w-0 text-[22px] font-extrabold leading-[1.15] tracking-tight text-text-primary text-balance">{r.name}</h2>
           <button
             onClick={onClose}
             aria-label="Schließen"
-            className="absolute top-2.5 right-2.5 w-11 h-11 rounded-full bg-black/60 backdrop-blur-sm text-white flex items-center justify-center active:scale-95 transition-transform"
+            className="shrink-0 -mt-1 -mr-1.5 w-11 h-11 rounded-full bg-surface-elevated text-text-secondary flex items-center justify-center active:scale-95 transition-transform"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
-        {/* Header — swipebare Bilder-Galerie */}
-        <div className="relative aspect-[16/10] w-full overflow-hidden bg-surface-elevated">
-          <GalleryHeader r={r} />
-          <div className="absolute inset-x-0 bottom-0 h-1/2 bg-gradient-to-t from-black/85 to-transparent pointer-events-none" />
-          <div className="absolute inset-x-0 bottom-0 p-4 pointer-events-none">
-            <h2 className="text-white text-xl font-bold leading-tight drop-shadow">{r.name}</h2>
+        {r.description && (
+          <button
+            onClick={() => setDescOpen((o) => !o)}
+            className={`block px-4 mt-1 text-left text-[14px] text-text-secondary leading-snug ${descOpen ? "" : "line-clamp-2"}`}
+          >
+            {r.description}
+          </button>
+        )}
+
+        {/* Bilder: swipebar, ohne Verlauf darüber */}
+        <div className="px-4 mt-3">
+          <div className="relative aspect-[3/2] w-full overflow-hidden rounded-2xl bg-surface-elevated">
+            <GalleryHeader r={r} />
           </div>
         </div>
 
@@ -1049,7 +1092,7 @@ function RecipeDetail({
               animate={{ y: 0, opacity: 1, scale: 1 }}
               exit={{ y: -20, opacity: 0, scale: 0.9 }}
               transition={{ type: "spring", damping: 24, stiffness: 320 }}
-              className="sticky top-2 z-30 mx-auto w-fit flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-black/80 backdrop-blur-md text-white shadow-lg"
+              className="sticky top-2 z-30 mx-auto w-fit flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-black/80 text-white shadow-lg"
             >
               <Check className="w-3.5 h-3.5 text-emerald-400" />
               <span className="text-xs font-semibold tabular-nums">
@@ -1059,13 +1102,8 @@ function RecipeDetail({
           )}
         </AnimatePresence>
 
-        {/* Küchentauglich (Review 17.10.): Beschreibung ganz, Zeit + Portionen als ruhige Zeile
-            über den Zutaten, Schritte offen in 16 px, alles Antippbare mindestens 44 px. */}
-        <div className="p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] space-y-4">
-          {r.description && <p className="text-[15px] text-text-secondary leading-relaxed">{r.description}</p>}
-
-          {/* Nährwerte + Video-Link in einer Zeile (Christian 09.10.: Zeit, Portionen, Level,
-              Bewerten und Teilen gehören nicht nach oben) */}
+        <div className="p-4 pt-3 pb-[calc(1rem+env(safe-area-inset-bottom))] space-y-3.5">
+          {/* Nährwerte + Video-Link in einer Zeile */}
           <div className="flex items-center gap-2">
             <div className="flex-1 min-w-0"><MacroChips r={r} animate /></div>
             {r.source && (
@@ -1132,7 +1170,7 @@ function RecipeDetail({
             </div>
           )}
 
-          {/* Zubereitung offen, Tipps zugeklappt */}
+          {/* Zubereitung und Tipps zugeklappt (21.10.2026: Fenster soll auf einen Blick passen) */}
           {r.lite && (
             <div className="flex items-center gap-2 text-sm text-text-muted">
               <Loader2 className="w-3.5 h-3.5 animate-spin" /> Zubereitung lädt …
@@ -1141,7 +1179,7 @@ function RecipeDetail({
           {(r.steps.length > 0 || r.tips.length > 0) && (
             <div className="rounded-xl border border-border divide-y divide-border overflow-hidden">
               {r.steps.length > 0 && (
-                <Collapsible title={`Zubereitung · ${r.steps.length} Schritte`} icon={ChefHat} defaultOpen>
+                <Collapsible title={`Zubereitung · ${r.steps.length} Schritte`} icon={ChefHat}>
                   <ol className="space-y-3.5 pt-1">
                     {r.steps.map((st, i) => (
                       <li key={i} className="flex gap-3">
@@ -1164,64 +1202,66 @@ function RecipeDetail({
             </div>
           )}
 
-          {/* Ganz unten: Bewerten, Koch-Verlauf, Teilen */}
-          <div className="pt-2 space-y-3 border-t border-border">
-            {onRate && (
-              <div className="flex items-center justify-between gap-2 pt-1">
-                <span className="text-[13px] text-text-muted">Deine Bewertung</span>
-                <StarRating value={rating} onChange={onRate} size={28} />
-              </div>
-            )}
-            {onAddCook && (
+          {/* Ganz unten, eingeklappt: Bewerten und Koch-Verlauf (Teilen entfällt, 21.10.2026) */}
+          {(onRate || onAddCook) && (
+            <div className="rounded-xl border border-border overflow-hidden">
               <Collapsible
-                title={cookEntries.length ? `Gekocht · zuletzt ${fmtDay(cookEntries[0].cookedOn)}` : "Gekocht? Eintragen"}
-                icon={CookingPot}
-                small
+                title={[
+                  rating ? `${rating} ★` : "Bewerten",
+                  cookEntries.length ? `gekocht ${fmtDay(cookEntries[0].cookedOn)}` : "gekocht?",
+                ].join(" · ")}
+                icon={Star}
               >
-                <div className="space-y-2 pt-1">
-                  {cookEntries.map((e) => (
-                    <div key={e.id} className="flex items-center gap-2 text-sm">
-                      <span className="text-text-secondary">{fmtDay(e.cookedOn)}{e.withName ? ` · mit ${e.withName}` : " · alleine"}</span>
-                      {e.isAuthor && onDeleteCook && (
-                        <button
-                          onClick={async () => {
-                            if (await ask({ title: "Eintrag löschen?", text: `Gekocht am ${fmtDay(e.cookedOn)}${e.withName ? ` mit ${e.withName}` : ""}.`, confirmLabel: "Löschen" })) onDeleteCook(e.id);
-                          }}
-                          aria-label="Eintrag entfernen"
-                          className="ml-auto -mr-2 w-11 h-11 flex items-center justify-center text-text-muted active:scale-90 transition-transform"
-                        >
-                          <X className="w-4 h-4" />
+                <div className="space-y-2">
+                  {onRate && (
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[13px] text-text-muted">Deine Bewertung</span>
+                      <StarRating value={rating} onChange={onRate} size={26} />
+                    </div>
+                  )}
+                  {onAddCook && (
+                    <div className="space-y-2 pt-1">
+                      {cookEntries.map((e) => (
+                        <div key={e.id} className="flex items-center gap-2 text-sm">
+                          <span className="text-text-secondary">{fmtDay(e.cookedOn)}{e.withName ? ` · mit ${e.withName}` : " · alleine"}</span>
+                          {e.isAuthor && onDeleteCook && (
+                            <button
+                              onClick={async () => {
+                                if (await ask({ title: "Eintrag löschen?", text: `Gekocht am ${fmtDay(e.cookedOn)}${e.withName ? ` mit ${e.withName}` : ""}.`, confirmLabel: "Löschen" })) onDeleteCook(e.id);
+                              }}
+                              aria-label="Eintrag entfernen"
+                              className="ml-auto -mr-2 w-11 h-11 flex items-center justify-center text-text-muted active:scale-90 transition-transform"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="relative">
+                          <select value={cookPartner} onChange={(e) => setCookPartner(e.target.value)} aria-label="Mit wem"
+                            className="appearance-none w-full h-11 text-[15px] bg-surface border border-border rounded-xl pl-3 pr-8 text-text-primary">
+                            <option value="">Alleine</option>
+                            {friends.map((f) => <option key={f.guestId} value={f.guestId}>mit {f.name}</option>)}
+                          </select>
+                          <ChevronDown className="w-4 h-4 text-text-muted absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                        </div>
+                        <input type="date" value={cookDate} max={todayISO()} onChange={(e) => setCookDate(e.target.value)} aria-label="Datum"
+                          className="w-full min-w-0 h-11 text-[15px] bg-surface border border-border rounded-xl px-3 text-text-primary" />
+                        <button onClick={() => onAddCook(cookPartner || null, cookDate || todayISO())}
+                          className="col-span-2 h-11 text-[15px] font-semibold text-white bg-accent rounded-xl active:scale-[0.98] transition-transform">
+                          Eintragen
                         </button>
-                      )}
+                      </div>
                     </div>
-                  ))}
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="relative">
-                      <select value={cookPartner} onChange={(e) => setCookPartner(e.target.value)} aria-label="Mit wem"
-                        className="appearance-none w-full h-11 text-[15px] bg-surface border border-border rounded-xl pl-3 pr-8 text-text-primary">
-                        <option value="">Alleine</option>
-                        {friends.map((f) => <option key={f.guestId} value={f.guestId}>mit {f.name}</option>)}
-                      </select>
-                      <ChevronDown className="w-4 h-4 text-text-muted absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                    </div>
-                    <input type="date" value={cookDate} max={todayISO()} onChange={(e) => setCookDate(e.target.value)} aria-label="Datum"
-                      className="w-full min-w-0 h-11 text-[15px] bg-surface border border-border rounded-xl px-3 text-text-primary" />
-                    <button onClick={() => onAddCook(cookPartner || null, cookDate || todayISO())}
-                      className="col-span-2 h-11 text-[15px] font-semibold text-white bg-accent rounded-xl active:scale-[0.98] transition-transform">
-                      Eintragen
-                    </button>
-                  </div>
+
+                  )}
                 </div>
               </Collapsible>
-            )}
-            <ShareButton
-              slug={r.slug}
-              name={r.name}
-              label="Rezept teilen"
-              className="w-full min-h-11 flex items-center justify-center gap-2 py-2.5 rounded-xl text-[15px] text-text-secondary active:bg-surface-elevated transition-colors"
-            />
-          </div>
+            </div>
+          )}
         </div>
+      </motion.div>
       </motion.div>
       {confirmDialog}
     </div>
@@ -1856,14 +1896,105 @@ function MySubmissions({ guestId, tick, onOpen }: { guestId: string; tick: numbe
   );
 }
 
+function fmtTime(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Berlin" });
+}
+
+// ── „Heute gemerkt“-Kacheln mit Wackel-Modus (21.10.2026) ─────
+// Gedrückt halten (0,45 s) → alle Kacheln wackeln wie auf dem iPhone-Homescreen, jede hat ein ✕.
+// Antippen des ✕ entfernt das Gericht aus „Heute gemerkt“; „Fertig“ oder Tipp daneben beendet.
+function TodayGrid({ picks, onOpen, onRemove }: {
+  picks: { r: Recipe; v: Verdict; at: string }[];
+  onOpen: (r: Recipe) => void;
+  onRemove: (slug: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressed = useRef(false);
+  const startPress = () => {
+    longPressed.current = false;
+    timer.current = setTimeout(() => {
+      longPressed.current = true;
+      setEditing(true);
+      try { navigator.vibrate?.(12); } catch { /* iOS kann das nicht */ }
+    }, 450);
+  };
+  const endPress = () => { if (timer.current) { clearTimeout(timer.current); timer.current = null; } };
+  // Letztes Gericht entfernt → Modus endet von selbst
+  const isEditing = editing && picks.length > 0;
+
+  return (
+    <div>
+      {isEditing && (
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-[13px] text-text-muted">Tippe auf ✕, um ein Gericht zu entfernen.</p>
+          <button onClick={() => setEditing(false)} className="min-h-9 px-3.5 rounded-full bg-accent text-white text-[13px] font-semibold active:scale-95 transition-transform">
+            Fertig
+          </button>
+        </div>
+      )}
+      <div className="grid grid-cols-2 gap-2.5">
+        <AnimatePresence initial={false}>
+          {picks.map(({ r, v, at }, i) => (
+            <motion.div
+              key={r.slug}
+              layout
+              exit={{ scale: 0.6, opacity: 0, transition: { duration: 0.18 } }}
+              className={`relative ${isEditing ? "wiggle" : ""}`}
+              style={isEditing ? { animationDelay: `${(i % 4) * -0.07}s` } : undefined}
+            >
+              <button
+                onClick={() => { if (longPressed.current) { longPressed.current = false; return; } if (!isEditing) onOpen(r); }}
+                onPointerDown={startPress}
+                onPointerUp={endPress}
+                onPointerLeave={endPress}
+                onPointerCancel={endPress}
+                onContextMenu={(e) => e.preventDefault()}
+                className="relative block w-full rounded-xl overflow-hidden aspect-[4/3] bg-surface-elevated text-left active:scale-[0.98] transition-transform select-none [-webkit-touch-callout:none]"
+              >
+                <RecipeImage r={r} shape="wide" sizes="(min-width: 640px) 33vw, 50vw" className="absolute inset-0 w-full h-full object-cover pointer-events-none" />
+                <div className="absolute inset-x-0 bottom-0 h-3/4 bg-gradient-to-t from-black/85 to-transparent" />
+                {v === "super" && (
+                  <span className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-[#d99a2b] flex items-center justify-center"><Star className="w-3.5 h-3.5 fill-white text-white" /></span>
+                )}
+                <div className="absolute inset-x-0 bottom-0 p-2">
+                  <p className="text-white text-[13px] font-semibold leading-tight line-clamp-2 drop-shadow">{r.name}</p>
+                  <p className="text-white/85 text-[12px] mt-0.5 flex items-center gap-1">
+                    {r.totalTime && <><Clock className="w-3 h-3" />{r.totalTime}</>}
+                    {r.totalTime && fmtTime(at) && <span className="opacity-60">·</span>}
+                    {fmtTime(at) && <span>{fmtTime(at)} Uhr</span>}
+                  </p>
+                </div>
+              </button>
+              {isEditing && (
+                <button
+                  onClick={() => onRemove(r.slug)}
+                  aria-label={`${r.name} aus Heute gemerkt entfernen`}
+                  className="absolute -top-2 -left-2 z-10 w-11 h-11 flex items-center justify-center"
+                >
+                  <span className="w-7 h-7 rounded-full bg-text-primary/85 text-surface flex items-center justify-center shadow-md">
+                    <X className="w-4 h-4" strokeWidth={3} />
+                  </span>
+                </button>
+              )}
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+}
+
 // Ein Eintrag in „Heute gemerkt“ / „Gestern“
 interface DayPick { slug: string; v: Verdict; at: string }
 
 function AccountView({
   guestId, guestName, recipes, verdicts, ratings, dislikes, cookEvents, onOpen, onSuggest, onLogout, onPlanEvening, onSaveDislikes, onConnections,
-  todayPicks, yesterdayPicks, yesterdayVisible, likeCounts, onGoSwipe, submitTick,
+  todayPicks, yesterdayPicks, yesterdayVisible, likeCounts, onGoSwipe, submitTick, onRemoveToday,
 }: {
   submitTick: number;
+  onRemoveToday: (slug: string) => void;
   todayPicks: DayPick[];
   yesterdayPicks: DayPick[];
   yesterdayVisible: boolean;
@@ -1920,11 +2051,6 @@ function AccountView({
     list.map((p) => ({ ...p, r: bySlug.get(p.slug) })).filter((x): x is DayPick & { r: Recipe } => !!x.r);
   const today = pickRecipes(todayPicks);
   const yesterday = pickRecipes(yesterdayPicks);
-  const fmtTime = (iso: string) => {
-    const d = new Date(iso);
-    return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Berlin" });
-  };
-
   // „Schon gekocht" — Gerichte mit Sterne-Bewertung ODER Koch-Verlauf, je Gericht
   // ein Eintrag: Sterne + zuletzt gekocht (Datum) + mit wem.
   const cooked = useMemo(() => {
@@ -2123,29 +2249,7 @@ function AccountView({
             </button>
           </div>
         ) : (
-          <div className="grid grid-cols-2 gap-2.5">
-            {today.map(({ r, v, at }) => (
-              <button
-                key={r.slug}
-                onClick={() => onOpen(r)}
-                className="relative rounded-xl overflow-hidden aspect-[4/3] bg-surface-elevated text-left active:scale-[0.98] transition-transform"
-              >
-                <RecipeImage r={r} shape="wide" sizes="(min-width: 640px) 33vw, 50vw" className="absolute inset-0 w-full h-full object-cover" />
-                <div className="absolute inset-x-0 bottom-0 h-3/4 bg-gradient-to-t from-black/85 to-transparent" />
-                {v === "super" && (
-                  <span className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-[#d99a2b] flex items-center justify-center"><Star className="w-3.5 h-3.5 fill-white text-white" /></span>
-                )}
-                <div className="absolute inset-x-0 bottom-0 p-2">
-                  <p className="text-white text-[13px] font-semibold leading-tight line-clamp-2 drop-shadow">{r.name}</p>
-                  <p className="text-white/85 text-[12px] mt-0.5 flex items-center gap-1">
-                    {r.totalTime && <><Clock className="w-3 h-3" />{r.totalTime}</>}
-                    {r.totalTime && fmtTime(at) && <span className="opacity-60">·</span>}
-                    {fmtTime(at) && <span>{fmtTime(at)} Uhr</span>}
-                  </p>
-                </div>
-              </button>
-            ))}
-          </div>
+          <TodayGrid picks={today} onOpen={onOpen} onRemove={onRemoveToday} />
         )}
       </div>
 
@@ -2791,6 +2895,20 @@ export default function RezeptePage() {
     }
   }, [guestId, guestName, verdicts, putDayEntry]);
 
+  // Aus „Heute gemerkt“ entfernen (21.10.2026, Wackel-Modus im Profil): heute zählt es als Nö.
+  // Das dauerhafte Like bleibt nur, wenn das Gericht schon an einem anderen Tag gemocht wurde.
+  const removeTodayPick = useCallback((slug: string) => {
+    const day = dayKey(new Date());
+    const otherLikeDays = Object.entries(dayStoreRef.current.days)
+      .filter(([d, m]) => d !== day && isLike(m[slug]?.v)).length + (dayStoreRef.current.before[slug] ?? 0);
+    const keep: Verdict | null = otherLikeDays > 0 ? (verdicts[slug] ?? null) : null;
+    touchedRef.current.add(slug);
+    saveVerdict(slug, keep);
+    setVerdicts((prev) => { const n = { ...prev }; if (keep) n[slug] = keep; else delete n[slug]; return n; });
+    putDayEntry(day, slug, { v: "nope", at: new Date().toISOString() });
+    if (guestId && guestName) postVerdict({ guestId, name: guestName, slug, verdict: keep, undo: true, day, dayVerdict: "nope" });
+  }, [verdicts, guestId, guestName, putDayEntry]);
+
   // Seiteneffekte bewusst außerhalb des setHistory-Updaters (der läuft im StrictMode doppelt).
   const handleUndo = useCallback(() => {
     const last = history[history.length - 1];
@@ -3147,15 +3265,17 @@ export default function RezeptePage() {
 
       {/* Kategorie-Filter — dezent, eine Reihe (nicht im Account, nicht im Abend-Modus) */}
       {mode !== "account" && !eveningGroup && (categories.length > 0 || loading) && (
-        <div className="flex flex-nowrap items-center gap-2 shrink-0 mt-3 overflow-x-auto scrollbar-none -mx-4 px-4">
-          {["Alle", ...CAT_GROUPS].map((cat) => {
+        <div className="grid grid-cols-4 gap-1 shrink-0 mt-3 p-1 rounded-full bg-surface/70 border border-border">
+          {/* Kein „Alle“ mehr (21.10.2026): aktive Gruppe nochmal antippen = Filter aus */}
+          {CAT_GROUPS.map((cat) => {
             const active = activeCat === cat;
             return (
               <button
                 key={cat}
-                onClick={() => setActiveCat(cat)}
-                className={`relative shrink-0 whitespace-nowrap px-3.5 py-1.5 rounded-full text-[13px] font-semibold border transition-colors active:scale-95 ${
-                  active ? "text-white border-transparent" : "bg-surface/60 border-border text-text-secondary"
+                onClick={() => setActiveCat(active ? "Alle" : cat)}
+                aria-pressed={active}
+                className={`relative min-h-9 px-1 rounded-full text-[13px] font-semibold whitespace-nowrap transition-colors active:scale-95 ${
+                  active ? "text-white" : "text-text-secondary"
                 }`}
               >
                 {active && (
@@ -3165,9 +3285,7 @@ export default function RezeptePage() {
                     transition={{ type: "spring", stiffness: 380, damping: 32 }}
                   />
                 )}
-                <span className="relative z-10">
-                  {cat === "Alle" ? "Alle" : `${CAT_GROUP_EMOJI[cat]} ${cat}`}
-                </span>
+                <span className="relative z-10">{cat}</span>
               </button>
             );
           })}
@@ -3183,13 +3301,10 @@ export default function RezeptePage() {
     <div className={`app-h relative mx-auto w-full max-w-3xl flex flex-col px-4 ${scrollMode ? "" : "pb-[calc(env(safe-area-inset-bottom)+14px+64px+14px)]"}`}>
       {!scrollMode && header}
 
-      {/* Oben nur ein schmaler Ausblender unter der Statusleiste (Raster, Profil) */}
+      {/* Oben kein Verlauf mehr (21.10.2026, Christian: Blur oben stört): nur eine glatte Fläche
+          genau so hoch wie die Statusleiste, damit Inhalt nicht unter der Uhr durchläuft. */}
       {scrollMode && (
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-x-0 top-0 z-30 h-[calc(env(safe-area-inset-top)+4px)]"
-          style={{ background: "linear-gradient(to bottom, var(--bg) 0%, var(--bg) 45%, color-mix(in srgb, var(--bg) 0%, transparent) 100%)" }}
-        />
+        <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 z-30 h-[env(safe-area-inset-top)] bg-bg" />
       )}
 
       {/* Inhalt */}
@@ -3242,6 +3357,7 @@ export default function RezeptePage() {
             yesterdayVisible={dayInfo.yesterdayVisible}
             likeCounts={likeCounts}
             submitTick={submitTick}
+            onRemoveToday={removeTodayPick}
             onGoSwipe={() => setMode("swipe")}
           />
         ) : mode === "swipe" ? (

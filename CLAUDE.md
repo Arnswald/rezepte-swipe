@@ -431,3 +431,12 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
 
 - **App-Symbol (08.10.2026):** im Stil der dunklen iPhone-Standard-Apps (dunkler Verlauf, Gabel in Terrakotta, Wisch-Bogen zart): `public/apple-touch-icon-v2.png`, `icon-192-v2.png`, `icon-512-v2.png`; Quelle `tools/icon/gabel.svg` + `tools/icon/ios2.swift` (`swift ios2.swift gabel.svg out.png 0.74`). Neue Dateinamen, weil iOS Symbole festhält; alte Dateien bleiben.
 - **Ausrollen ohne Klicken (08.10.2026):** `PORTAINER_WEBHOOK_URL` ist nicht gesetzt, CI baut nur das Image. Der Container lief deshalb vom 31.07. bis 08.10. unverändert. Ausrollen per Portainer-API wie das Dashboard-Autodeploy: Stack 10 (`rezepte-swipe`) mit `PUT /api/stacks/10?endpointId=1 {stackFileContent, env, pullImage: true}`, Zugang über portainer.christianarns.de (Cloudflare-Access-Dienstschlüssel + Portainer-Token in ~/.config/second-brain/).
+
+## Feinschliff-Runde 21.10.2026 (Christian auf dem iPhone)
+
+- **Stapel ohne Nachladen:** vordere und hintere Karten sind EINE Liste mit dem Slug als Schlüssel. Rückt eine Karte nach vorne, bleibt sie dasselbe Element mit demselben, schon dekodierten Bild (geprüft: gleiches `<img>`, `complete`). Vorher waren es getrennte Bäume, die nachrückende Karte wurde neu aufgebaut und sprang. Badges auf der Karte ohne `backdrop-blur` (kostet beim Wischen jedes Bild).
+- **Kategorien:** vier Gruppen (Frühstück · Hauptgang · Snacks & Co · Dessert) als gleich breite Leiste, kein „Alle“ mehr; aktive Gruppe nochmal antippen = Filter aus. Hauptgang = Hauptgericht + Salat (+ Suppe), Snacks & Co = Snack, Beilage, Sauce, Getränk.
+- **Oben kein Verlauf mehr** in Raster und Profil: nur eine glatte Fläche in Höhe der Statusleiste.
+- **Rezept-Fenster:** Titel + Beschreibung (2 Zeilen, antippen = ganz) oben, darunter die Bilder (3:2, ohne Verlauf), Zubereitung und Tipps zugeklappt, Bewerten + Gekocht in einer Klappe, Teilen entfernt. Nach unten ziehen schließt von überall, solange der Inhalt oben steht (eigene Touch-Logik, `touchmove` nicht passiv).
+- **Heute gemerkt bearbeiten:** Gedrückt halten (0,45 s) → Wackel-Modus mit ✕ wie auf dem Homescreen. Entfernen = heute „Nö“; das dauerhafte Like bleibt nur, wenn an einem anderen Tag gemocht.
+- **Kartenbilder:** 27 Karten per `PATCH /api/admin/recipes/<slug>` `{cardImage}` auf das vorhandene `_KI`-Bild gestellt (Prüfung aller 202 Kartenbilder, Liste im Scratchpad der Sitzung). 48 Rezepte haben kein Bild mit fertigem Gericht und brauchen ein neues KI-Bild.
