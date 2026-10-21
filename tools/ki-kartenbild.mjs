@@ -20,13 +20,16 @@ const args = process.argv.slice(2);
 const slug = args[0];
 const hochladen = args.includes("--hochladen");
 const ausDatei = args.includes("--aus") ? args[args.indexOf("--aus") + 1] : null;
+// --ohne-vorlage: nur aus Name, Beschreibung, Zutaten (wenn jede Vorlage Schrift ins Bild schmuggelt)
+const ohneVorlage = args.includes("--ohne-vorlage");
 if (!slug || !FAL_KEY) { console.error("Aufruf: node tools/ki-kartenbild.mjs <slug> [--hochladen]"); process.exit(2); }
 
 const r = (await (await fetch(`${APP}/api/recipes?slug=${encodeURIComponent(slug)}`, { headers: UA })).json()).recipe;
 if (!r) throw new Error("Rezept nicht gefunden: " + slug);
 
-let vorlage;
-if (ausDatei) vorlage = readFileSync(ausDatei);
+let vorlage = null;
+if (ohneVorlage) { /* keine */ }
+else if (ausDatei) vorlage = readFileSync(ausDatei);
 else {
   // Original des Profilbilds (nicht das KI-Kartenbild), sonst das Kartenbild
   const orig = r.images.find((i) => !/_ki[.-]/i.test(i)) ?? r.image;
@@ -39,16 +42,18 @@ const prompt = [
   `Professional food photograph of the FINISHED, ready-to-eat dish "${r.name}".`,
   r.description ? `Dish description (German): ${r.description}` : "",
   zutaten ? `Main ingredients (German): ${zutaten}.` : "",
-  "Use the reference image only to match how this real dish, its ingredients, cookware and plating look.",
+  ohneVorlage ? "" : "Use the reference image only to match how this real dish, its ingredients, cookware and plating look.",
   "Show only the finished, plated dish. No people, no hands, no faces, no text, no captions, no logos, no watermarks.",
   "Natural soft daylight, appetizing, realistic home-cooked look, shallow depth of field, portrait 4:5 framing, dish centered and filling the frame.",
 ].filter(Boolean).join(" ");
 
-const typ = vorlage[0] === 0x89 ? "image/png" : vorlage.slice(0, 4).toString("hex") === "52494646" ? "image/webp" : "image/jpeg";
-const res = await fetch("https://fal.run/fal-ai/nano-banana/edit", {
+const typ = !vorlage ? null : vorlage[0] === 0x89 ? "image/png" : vorlage.slice(0, 4).toString("hex") === "52494646" ? "image/webp" : "image/jpeg";
+const res = await fetch(`https://fal.run/fal-ai/nano-banana${vorlage ? "/edit" : ""}`, {
   method: "POST",
   headers: { Authorization: `Key ${FAL_KEY}`, "Content-Type": "application/json" },
-  body: JSON.stringify({ prompt, image_urls: [`data:${typ};base64,${vorlage.toString("base64")}`], num_images: 1, output_format: "png" }),
+  body: JSON.stringify(vorlage
+    ? { prompt, image_urls: [`data:${typ};base64,${vorlage.toString("base64")}`], num_images: 1, output_format: "png" }
+    : { prompt, num_images: 1, output_format: "png", aspect_ratio: "4:5" }),
 });
 const out = await res.json();
 if (!res.ok) throw new Error(`fal ${res.status}: ${JSON.stringify(out).slice(0, 300)}`);
