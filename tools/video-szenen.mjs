@@ -54,7 +54,9 @@ async function kandidaten(slug) {
   const video = readdirSync(dir).find((f) => f.startsWith("video."));
   if (!video) return console.log(slug, "→ kein Video (Bildbeitrag oder gesperrt)");
   const vpath = join(dir, video);
-  const dauer = Number(sh("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", vpath]).trim());
+  // Länge der BILDspur (bei manchen Reels ist der Ton länger, Standbilder dahinter scheitern)
+  const vDauer = Number(sh("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=duration", "-of", "csv=p=0", vpath]).trim());
+  const dauer = vDauer > 0 ? vDauer : Number(sh("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", vpath]).trim());
   if (!(dauer > 3)) { rmSync(vpath, { force: true }); return console.log(slug, "→ zu kurz"); }
   let log = "";
   try { log = execFileSync("sh", ["-c", `ffmpeg -hide_banner -i "${vpath}" -vf "select='gt(scene,0.25)',showinfo" -f null - 2>&1`], { encoding: "utf8", maxBuffer: 64 << 20 }); } catch (e) { log = String(e.stdout ?? ""); }
@@ -64,7 +66,11 @@ async function kandidaten(slug) {
     const a = start + i * teil, b = a + teil;
     const w = wechsel.find((t) => t >= a && t < b - 0.4);
     const t = Math.min(dauer - 0.15, w ? w + 0.35 : a + teil / 2);
-    sh("ffmpeg", ["-hide_banner", "-loglevel", "error", "-ss", t.toFixed(2), "-i", vpath, "-frames:v", "1", "-q:v", "2", join(dir, `k-${String(i + 1).padStart(2, "0")}.jpg`)]);
+    const ziel = join(dir, `k-${String(i + 1).padStart(2, "0")}.jpg`);
+    for (const tt of [t, t - 1, t * 0.9]) {
+      try { sh("ffmpeg", ["-hide_banner", "-loglevel", "error", "-y", "-ss", Math.max(0, tt).toFixed(2), "-i", vpath, "-frames:v", "1", "-q:v", "2", ziel]); } catch { /* nächster Zeitpunkt */ }
+      if (existsSync(ziel)) break;
+    }
   }
   rmSync(vpath, { force: true });
   // Nummerierter Bogen 5 × 2 (Pillow; dem Homebrew-ffmpeg fehlt drawtext)
