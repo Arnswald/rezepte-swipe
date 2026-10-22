@@ -7,7 +7,7 @@ import {
   Loader2, ChevronRight, ChevronDown, Clock, Users, Flame,
   X, ExternalLink, AlertCircle, Check,
   Heart, Star, RotateCcw, User, Search, Copy, UserPlus, Sparkles, LogOut,
-  CookingPot, UtensilsCrossed, ChefHat, Lightbulb, Soup, Share2, ImagePlus, Mic, Square, Pencil, BookOpen,
+  CookingPot, UtensilsCrossed, ChefHat, Lightbulb, Soup, ImagePlus, Mic, Square, Pencil, BookOpen,
 } from "lucide-react";
 
 // Instagram-Glyph (aus lucide entfernt) als inline-SVG
@@ -1826,9 +1826,6 @@ function MatchCelebration({
 interface Connection { guestId: string; name: string; friendCode: string }
 interface MatchRecipeUI { slug: string; recipeName: string; category: string; mine: Verdict; theirs: Verdict; bothSuper: boolean }
 interface MatchGroupUI { partner: Connection; recipes: MatchRecipeUI[] }
-// Gruppen (v3.1)
-interface GroupMatchUI { slug: string; recipeName: string; category: string; count: number; supers: number; memberCount: number; unanimous: boolean }
-interface GroupViewUI { id: string; name: string; code: string; members: { guestId: string; name: string }[]; memberCount: number; matches: GroupMatchUI[]; evening: { plan: GroupMatchUI[]; myPicks: number } }
 
 // ── Meine Einreichungen (Profil) ──────────────────────────────
 // Eigene Einreichungen mit Status. Solange eine ausgelesen wird, alle 15 s nachfragen.
@@ -1906,6 +1903,27 @@ function MySubmissions({ guestId, tick, onOpen }: { guestId: string; tick: numbe
 function fmtTime(iso: string): string {
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit", timeZone: "Europe/Berlin" });
+}
+
+// Code eingeben + Verbinden (Profil, Karte „Zu zweit“)
+function ConnectRow({ code, setCode, connect, connecting }: { code: string; setCode: (v: string) => void; connect: () => void; connecting: boolean }) {
+  return (
+    <div className="flex items-center gap-2">
+      <input
+        value={code}
+        onChange={(e) => setCode(e.target.value.toUpperCase())}
+        onKeyDown={(e) => { if (e.key === "Enter") connect(); }}
+        placeholder="Code der anderen Person"
+        autoCapitalize="characters"
+        className="flex-1 min-w-0 h-11 px-3 rounded-xl bg-surface-elevated border border-border text-base text-text-primary tracking-wider uppercase placeholder:normal-case placeholder:tracking-normal placeholder:text-text-muted focus:outline-none focus:border-accent"
+      />
+      <button onClick={connect} disabled={connecting || !code.trim()}
+        className="shrink-0 h-11 px-4 rounded-xl bg-accent text-white text-[15px] font-semibold active:scale-95 transition-transform disabled:opacity-40 flex items-center gap-1.5">
+        {connecting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+        Verbinden
+      </button>
+    </div>
+  );
 }
 
 // ── „Heute gemerkt“-Kacheln mit Wackel-Modus (21.10.2026) ─────
@@ -1997,7 +2015,7 @@ function TodayGrid({ picks, onOpen, onRemove }: {
 interface DayPick { slug: string; v: Verdict; at: string }
 
 function AccountView({
-  guestId, guestName, recipes, verdicts, ratings, dislikes, cookEvents, onOpen, onSuggest, onLogout, onPlanEvening, onSaveDislikes, onConnections,
+  guestId, guestName, recipes, verdicts, ratings, dislikes, cookEvents, onOpen, onSuggest, onLogout, onSaveDislikes, onConnections,
   todayPicks, yesterdayPicks, yesterdayVisible, likeCounts, onGoSwipe, submitTick, onRemoveToday,
 }: {
   submitTick: number;
@@ -2017,7 +2035,6 @@ function AccountView({
   onOpen: (r: Recipe) => void;
   onSuggest: () => void;
   onLogout: () => void;
-  onPlanEvening: (id: string, name: string) => void;
   onSaveDislikes: (list: string[]) => void;
   onConnections: (list: Friend[]) => void; // hält das „mit wem“-Dropdown im Detail aktuell
 }) {
@@ -2028,10 +2045,8 @@ function AccountView({
   const [loading, setLoading] = useState(true);
   const [code, setCode] = useState("");
   const [connecting, setConnecting] = useState(false);
-  const [groups, setGroups] = useState<GroupViewUI[]>([]);
-  const [groupName, setGroupName] = useState("");
-  const [joinCode, setJoinCode] = useState("");
-  const [groupBusy, setGroupBusy] = useState(false);
+  const [matchesOpen, setMatchesOpen] = useState(false);
+  const [cookedOpen, setCookedOpen] = useState(false);
 
   const bySlug = useMemo(() => {
     const m = new Map<string, Recipe>();
@@ -2117,76 +2132,9 @@ function AccountView({
     }
   }, [guestId, guestName, onConnections]);
 
-  const loadGroups = useCallback(async () => {
-    try {
-      const res = await fetch("/api/groups", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "overview", guestId, name: guestName }),
-      });
-      const d = await res.json().catch(() => ({}));
-      if (res.ok) setGroups(d.groups ?? []);
-    } catch { /* offline egal */ }
-  }, [guestId, guestName]);
-
   // Laden beim Öffnen (setState passiert erst nach dem fetch, nicht synchron)
   // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { load(); loadGroups(); }, [load, loadGroups]);
-
-  const groupAction = useCallback(async (body: Record<string, unknown>): Promise<Record<string, unknown> | null> => {
-    setGroupBusy(true);
-    try {
-      const res = await fetch("/api/groups", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ guestId, name: guestName, ...body }),
-      });
-      const d = await res.json().catch(() => ({}));
-      if (!res.ok) { toast.error("Klappt nicht", (d.error as string) ?? "Versuch's nochmal."); return null; }
-      await loadGroups();
-      return d;
-    } catch {
-      toast.error("Keine Verbindung", "Versuch's gleich nochmal."); return null;
-    } finally {
-      setGroupBusy(false);
-    }
-  }, [guestId, guestName, loadGroups, toast]);
-
-  const createGroup = async () => {
-    const n = groupName.trim();
-    if (!n) return;
-    const d = await groupAction({ action: "create", groupName: n });
-    if (d) { setGroupName(""); toast.success("Gruppe erstellt 🎉", "Teile den Code, damit andere beitreten."); }
-  };
-  const joinGroup = async () => {
-    const c = joinCode.trim();
-    if (!c) return;
-    const d = await groupAction({ action: "join", code: c });
-    if (d) { setJoinCode(""); toast.success("Beigetreten! 🎉", "Ab jetzt seht ihr eure Gruppen-Favoriten."); }
-  };
-  const leaveGroup = async (groupId: string, name: string, members: number) => {
-    const ok = await ask({
-      title: `Gruppe „${name}“ verlassen?`,
-      text: members <= 1
-        ? "Du bist das letzte Mitglied, die Gruppe wird damit gelöscht."
-        : "Deine Auswahl für heute Abend in dieser Gruppe wird gelöscht. Zurück kommst du nur mit dem Gruppencode.",
-      confirmLabel: "Verlassen",
-    });
-    if (ok) await groupAction({ action: "leave", groupId });
-  };
-  const copyGroupCode = async (c: string) => {
-    try { await navigator.clipboard.writeText(c); toast.success("Kopiert", "Gruppencode in der Zwischenablage."); } catch { /* ignore */ }
-  };
-  // Einladungslink: wer ihn öffnet, muss sich einen Account machen und ist dann
-  // automatisch in der Gruppe (Auto-Beitritt über `?gruppe=CODE` beim App-Start).
-  const inviteToGroup = async (code: string, name: string) => {
-    const url = (typeof window !== "undefined" ? window.location.origin : "") + `/?gruppe=${encodeURIComponent(code)}`;
-    const text = `Lass uns gemeinsam Essen planen 🍽️\nTritt meiner Gruppe „${name}" bei:`;
-    if (typeof navigator !== "undefined" && navigator.share) {
-      try { await navigator.share({ title: "Essen planen gemeinsam", text, url }); return; } catch (e) { if ((e as Error)?.name === "AbortError") return; /* sonst Fallback */ }
-    }
-    try { await navigator.clipboard.writeText(`${text}\n${url}`); toast.success("Link kopiert", "Füg ihn z.B. in WhatsApp ein."); } catch { /* ignore */ }
-  };
+  useEffect(() => { load(); }, [load]);
 
   const copyCode = async () => {
     try {
@@ -2242,7 +2190,7 @@ function AccountView({
         <h2 className="text-xl font-extrabold text-text-primary tracking-tight">Hey {guestName} 👋</h2>
       </div>
 
-      {/* Heute gemerkt: alles, was heute nach rechts oder hoch ging (Superlikes zuerst) */}
+      {/* Heute gemerkt: alles, was heute nach rechts oder hoch ging, zuletzt Gewischtes oben */}
       <div className="order-2">
         <h3 className="text-[15px] font-bold text-text-primary flex items-center gap-1.5 mb-2">
           <Heart className="w-4 h-4 text-[#3f6b43] fill-[#3f6b43]" /> Heute gemerkt
@@ -2293,236 +2241,85 @@ function AccountView({
         </div>
       )}
 
-      {/* Freundescode */}
-      <div className="order-10 rounded-2xl border border-border bg-surface p-4">
-        <p className="text-xs font-semibold text-text-muted uppercase tracking-wide">Dein Freundescode</p>
-        <div className="flex items-center gap-2 mt-2">
-          <div className="flex-1 text-2xl font-extrabold tracking-[0.12em] text-accent tabular-nums select-all">
-            {loading ? "…" : friendCode || "—"}
-          </div>
-          <button
-            onClick={copyCode}
-            disabled={!friendCode}
-            aria-label="Code kopieren"
-            className="w-10 h-10 rounded-xl bg-surface-elevated border border-border flex items-center justify-center text-text-secondary active:scale-95 transition-transform disabled:opacity-40"
-          >
-            <Copy className="w-4 h-4" />
-          </button>
-        </div>
-        <p className="text-[12px] text-text-muted mt-2 leading-relaxed">
-          Teile ihn mit Freund:innen — sobald ihr euch verbindet, seht ihr eure gemeinsamen Lieblingsgerichte.
-        </p>
-        <button
-          onClick={invite}
-          disabled={!friendCode}
-          className="mt-3 w-full py-2.5 rounded-xl bg-accent text-white text-sm font-semibold active:scale-[0.98] transition-transform disabled:opacity-40 flex items-center justify-center gap-2"
-        >
-          <Sparkles className="w-4 h-4" /> Einladen
-        </button>
-      </div>
-
-      {/* Verbinden */}
-      <div className="order-11 rounded-2xl border border-border bg-surface p-4">
-        <p className="text-xs font-semibold text-text-muted uppercase tracking-wide flex items-center gap-1.5">
-          <UserPlus className="w-3.5 h-3.5" /> Mit jemandem verbinden
-        </p>
-        <div className="flex items-center gap-2 mt-2.5">
-          <input
-            value={code}
-            onChange={(e) => setCode(e.target.value.toUpperCase())}
-            onKeyDown={(e) => { if (e.key === "Enter") connect(); }}
-            placeholder="Code, z.B. MELI-4K2"
-            inputMode="text"
-            autoCapitalize="characters"
-            className="flex-1 min-w-0 px-3 py-2.5 rounded-xl bg-surface-elevated border border-border text-sm text-text-primary tracking-wider uppercase placeholder:normal-case placeholder:tracking-normal placeholder:text-text-muted focus:outline-none focus:border-accent"
-          />
-          <button
-            onClick={connect}
-            disabled={connecting || !code.trim()}
-            className="shrink-0 px-4 py-2.5 rounded-xl bg-accent text-white text-sm font-semibold active:scale-95 transition-transform disabled:opacity-40 flex items-center gap-1.5"
-          >
-            {connecting ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-            Verbinden
-          </button>
-        </div>
-      </div>
-
-      {/* Matches */}
+      {/* Zu zweit (22.10.2026): eine Karte statt Freundescode, Verbinden, Matches und Gruppen.
+          Es geht um zwei Personen; Gruppen sind raus. */}
       <div className="order-5">
-        <h3 className="text-sm font-bold text-text-primary flex items-center gap-1.5 mb-2">
-          <Heart className="w-4 h-4 text-accent fill-accent" /> Eure Matches
+        <h3 className="text-[15px] font-bold text-text-primary flex items-center gap-1.5 mb-2">
+          <Heart className="w-4 h-4 text-accent fill-accent" /> Zu zweit
         </h3>
         {loading ? (
           <div className="flex justify-center py-6"><Loader2 className="w-4 h-4 text-text-muted animate-spin" /></div>
         ) : connections.length === 0 ? (
-          <p className="text-sm text-text-muted bg-surface border border-border rounded-2xl p-4">
-            Noch niemand verbunden. Teile deinen Freundescode oder gib unten einen ein.
-          </p>
+          <div className="rounded-2xl border border-border bg-surface p-4 space-y-3">
+            <p className="text-[15px] text-text-secondary leading-relaxed">
+              Verbinde dich mit deinem Partner oder deiner Partnerin. Dann seht ihr hier, welche Gerichte ihr beide mögt.
+            </p>
+            <div className="flex items-center gap-2">
+              <span className="text-[13px] text-text-muted">Dein Code</span>
+              <span className="flex-1 text-xl font-extrabold tracking-[0.12em] text-accent tabular-nums select-all">{friendCode || "—"}</span>
+              <button onClick={copyCode} disabled={!friendCode} aria-label="Code kopieren"
+                className="w-11 h-11 rounded-xl bg-surface-elevated border border-border flex items-center justify-center text-text-secondary active:scale-95 transition-transform disabled:opacity-40">
+                <Copy className="w-4 h-4" />
+              </button>
+            </div>
+            <button onClick={invite} disabled={!friendCode}
+              className="w-full min-h-11 rounded-xl bg-accent text-white text-[15px] font-semibold active:scale-[0.98] transition-transform disabled:opacity-40 flex items-center justify-center gap-2">
+              <Sparkles className="w-4 h-4" /> Code teilen
+            </button>
+            <ConnectRow code={code} setCode={setCode} connect={connect} connecting={connecting} />
+          </div>
         ) : (
-          <div className="space-y-4">
-            {matches.map((g) => (
-              <div key={g.partner.guestId} className="rounded-2xl border border-border bg-surface p-3.5">
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-sm font-semibold text-text-primary">Mit {g.partner.name}</p>
-                  <span className="text-[11px] text-text-muted tabular-nums">{g.recipes.length} Treffer</span>
-                </div>
-                {g.recipes.length === 0 ? (
-                  <p className="text-xs text-text-muted">Noch keine gemeinsamen Favoriten — wischt beide weiter!</p>
-                ) : (
-                  <div className="space-y-1.5">
-                    {g.recipes.map((m) => {
-                      const r = bySlug.get(m.slug);
-                      return (
-                        <button
-                          key={m.slug}
-                          onClick={() => { if (r) onOpen(r); }}
-                          className="w-full flex items-center gap-3 p-1.5 rounded-xl text-left active:bg-surface-elevated transition-colors"
-                        >
-                          <div className="w-11 h-11 shrink-0 rounded-lg overflow-hidden bg-surface-elevated">
-                            {r ? <RecipeImage r={r} shape="square" sizes="48px" className="w-full h-full object-cover" /> : null}
-                          </div>
-                          <span className="flex-1 min-w-0 text-sm font-medium text-text-primary truncate">{m.recipeName || r?.name || m.slug}</span>
-                          {m.bothSuper && (
-                            <span className="shrink-0 flex items-center gap-1 text-[10px] font-bold text-[#d99a2b]">
-                              <Star className="w-3.5 h-3.5 fill-[#d99a2b]" /> beide
-                            </span>
-                          )}
+          <div className="space-y-3">
+            {matches.map((g) => {
+              const list = matchesOpen ? g.recipes : g.recipes.slice(0, 6);
+              return (
+                <div key={g.partner.guestId} className="rounded-2xl border border-border bg-surface p-3.5">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-[15px] font-semibold text-text-primary">Mit {g.partner.name}</p>
+                    <span className="text-[12px] text-text-muted tabular-nums">{g.recipes.length} gemeinsam gemocht</span>
+                  </div>
+                  {g.recipes.length === 0 ? (
+                    <p className="text-[14px] text-text-muted">Noch nichts, das ihr beide mögt. Wischt beide weiter!</p>
+                  ) : (
+                    <>
+                      <div className="grid grid-cols-2 gap-2.5">
+                        {list.map((m) => {
+                          const r = bySlug.get(m.slug);
+                          if (!r) return null;
+                          return (
+                            <button key={m.slug} onClick={() => onOpen(r)}
+                              className="relative rounded-xl overflow-hidden aspect-[4/3] bg-surface-elevated text-left active:scale-[0.98] transition-transform">
+                              <RecipeImage r={r} shape="wide" sizes="(min-width: 640px) 33vw, 50vw" className="absolute inset-0 w-full h-full object-cover" />
+                              <div className="absolute inset-x-0 bottom-0 h-3/5 bg-gradient-to-t from-black/85 to-transparent" />
+                              {m.bothSuper && (
+                                <span className="absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded-full bg-[#d99a2b] text-white text-[11px] font-bold flex items-center gap-0.5">
+                                  <Star className="w-3 h-3 fill-white" /> beide
+                                </span>
+                              )}
+                              <p className="absolute inset-x-0 bottom-0 p-2 text-white text-[13px] font-semibold leading-tight line-clamp-2 drop-shadow">{r.name}</p>
+                            </button>
+                          );
+                        })}
+                      </div>
+                      {g.recipes.length > 6 && (
+                        <button onClick={() => setMatchesOpen((o) => !o)}
+                          className="mt-2.5 w-full min-h-11 rounded-xl bg-surface-elevated border border-border text-text-secondary text-[13px] font-semibold active:scale-[0.98] transition-transform">
+                          {matchesOpen ? "Weniger anzeigen" : `Alle ${g.recipes.length} anzeigen`}
                         </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Gruppen */}
-      <div className="order-9">
-        <h3 className="text-sm font-bold text-text-primary flex items-center gap-1.5 mb-2">
-          <Users className="w-4 h-4 text-accent" /> Gruppen
-          {groups.length > 0 && <span className="text-[11px] font-normal text-text-muted tabular-nums">({groups.length})</span>}
-        </h3>
-
-        {/* Erstellen / Beitreten */}
-        <div className="rounded-2xl border border-border bg-surface p-4 space-y-2.5">
-          <div className="flex items-center gap-2">
-            <input
-              value={groupName}
-              onChange={(e) => setGroupName(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") createGroup(); }}
-              placeholder="Neue Gruppe (Name)…"
-              className="flex-1 min-w-0 px-3 py-2.5 rounded-xl bg-surface-elevated border border-border text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
-            />
-            <button onClick={createGroup} disabled={groupBusy || !groupName.trim()} className="shrink-0 px-3.5 py-2.5 rounded-xl bg-accent text-white text-sm font-semibold active:scale-95 transition-transform disabled:opacity-40">
-              Erstellen
-            </button>
-          </div>
-          <div className="flex items-center gap-2">
-            <input
-              value={joinCode}
-              onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
-              onKeyDown={(e) => { if (e.key === "Enter") joinGroup(); }}
-              placeholder="Gruppencode, z.B. FAMI-3K2"
-              autoCapitalize="characters"
-              className="flex-1 min-w-0 px-3 py-2.5 rounded-xl bg-surface-elevated border border-border text-sm text-text-primary uppercase tracking-wider placeholder:normal-case placeholder:tracking-normal placeholder:text-text-muted focus:outline-none focus:border-accent"
-            />
-            <button onClick={joinGroup} disabled={groupBusy || !joinCode.trim()} className="shrink-0 px-3.5 py-2.5 rounded-xl bg-surface-elevated border border-border text-text-secondary text-sm font-semibold active:scale-95 transition-transform disabled:opacity-40">
-              Beitreten
-            </button>
-          </div>
-        </div>
-
-        {/* Gruppenliste mit Ranking */}
-        {groups.length > 0 && (
-          <div className="mt-3 space-y-3">
-            {groups.map((g) => (
-              <div key={g.id} className="rounded-2xl border border-border bg-surface p-3.5">
-                <div className="flex items-center gap-2">
-                  <p className="text-sm font-bold text-text-primary flex-1 min-w-0 truncate">{g.name}</p>
-                  <button onClick={() => copyGroupCode(g.code)} className="shrink-0 text-[11px] font-mono font-semibold text-accent bg-accent/10 border border-accent/15 rounded-md px-1.5 py-0.5 active:scale-95 transition-transform">
-                    {g.code}
-                  </button>
-                  <button onClick={() => leaveGroup(g.id, g.name, g.memberCount)} disabled={groupBusy} aria-label="Gruppe verlassen" className="shrink-0 -mr-2 w-11 h-11 flex items-center justify-center rounded-xl text-text-muted active:text-[#bd5138] active:bg-surface-elevated transition-colors">
-                    <LogOut className="w-4 h-4" />
-                  </button>
+                      )}
+                    </>
+                  )}
                 </div>
-                <p className="text-[11px] text-text-muted mt-1 mb-2 truncate">
-                  {g.members.map((m) => m.name).join(", ")} · {g.memberCount} {g.memberCount === 1 ? "Mitglied" : "Mitglieder"}
-                </p>
-                <button
-                  onClick={() => inviteToGroup(g.code, g.name)}
-                  className="w-full mb-3 py-2 rounded-xl bg-accent/10 text-accent text-xs font-semibold flex items-center justify-center gap-1.5 active:scale-[0.98] transition-transform"
-                >
-                  <Share2 className="w-3.5 h-3.5" /> Einladungslink verschicken
-                </button>
-
-                {/* Für heute Abend planen */}
-                <button
-                  onClick={() => onPlanEvening(g.id, g.name)}
-                  className="w-full mb-2.5 py-2.5 rounded-xl bg-accent text-white text-xs font-bold flex items-center justify-center gap-1.5 active:scale-[0.98] transition-transform"
-                >
-                  🍳 Für heute Abend planen
-                </button>
-
-                {/* Essensplan heute (getrennte Runde) */}
-                {g.evening.plan.length > 0 && (
-                  <div className="mb-3">
-                    <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wide mb-1.5">🍳 Essensplan heute</p>
-                    <div className="space-y-1.5">
-                      {g.evening.plan.slice(0, 8).map((m) => {
-                        const r = bySlug.get(m.slug);
-                        return (
-                          <button
-                            key={m.slug}
-                            onClick={() => { if (r) onOpen(r); }}
-                            className="w-full flex items-center gap-3 p-1.5 rounded-xl text-left active:bg-surface-elevated transition-colors"
-                          >
-                            <div className="w-10 h-10 shrink-0 rounded-lg overflow-hidden bg-surface-elevated">
-                              {r ? <RecipeImage r={r} shape="square" sizes="48px" className="w-full h-full object-cover" /> : null}
-                            </div>
-                            <span className="flex-1 min-w-0 text-sm font-medium text-text-primary truncate">{m.recipeName || r?.name || m.slug}</span>
-                            <span className={`shrink-0 flex items-center gap-1 text-[11px] font-bold tabular-nums px-2 py-0.5 rounded-full ${m.unanimous ? "bg-[#3f6b43]/15 text-[#3f6b43]" : "bg-surface-elevated text-text-muted"}`}>
-                              {m.count}/{m.memberCount}
-                              {m.unanimous && <Check className="w-3 h-3" />}
-                            </span>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                )}
-
-                {/* Beliebt in der Gruppe (dauerhaft, aus allen Favoriten) */}
-                <p className="text-[10px] font-semibold text-text-muted uppercase tracking-wide mb-1.5">Beliebt in der Gruppe</p>
-                {g.matches.length === 0 ? (
-                  <p className="text-xs text-text-muted">Noch keine Favoriten in der Gruppe — wischt los!</p>
-                ) : (
-                  <div className="space-y-1.5">
-                    {g.matches.slice(0, 12).map((m) => {
-                      const r = bySlug.get(m.slug);
-                      return (
-                        <button
-                          key={m.slug}
-                          onClick={() => { if (r) onOpen(r); }}
-                          className="w-full flex items-center gap-3 p-1.5 rounded-xl text-left active:bg-surface-elevated transition-colors"
-                        >
-                          <div className="w-11 h-11 shrink-0 rounded-lg overflow-hidden bg-surface-elevated">
-                            {r ? <RecipeImage r={r} shape="square" sizes="48px" className="w-full h-full object-cover" /> : null}
-                          </div>
-                          <span className="flex-1 min-w-0 text-sm font-medium text-text-primary truncate">{m.recipeName || r?.name || m.slug}</span>
-                          <span className={`shrink-0 flex items-center gap-1 text-[11px] font-bold tabular-nums px-2 py-0.5 rounded-full ${m.unanimous ? "bg-[#3f6b43]/15 text-[#3f6b43]" : "bg-surface-elevated text-text-muted"}`}>
-                            {m.count}/{m.memberCount}
-                            {m.unanimous && <Check className="w-3 h-3" />}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            ))}
+              );
+            })}
+            <div className="rounded-2xl border border-border bg-surface px-3.5 py-1">
+              <Collapsible title="Weitere Person verbinden" icon={UserPlus} small>
+                <div className="space-y-2.5 pt-1 pb-2">
+                  <p className="text-[13px] text-text-muted">Dein Code: <span className="font-bold text-accent tracking-wider select-all">{friendCode}</span></p>
+                  <ConnectRow code={code} setCode={setCode} connect={connect} connecting={connecting} />
+                </div>
+              </Collapsible>
+            </div>
           </div>
         )}
       </div>
@@ -2540,7 +2337,7 @@ function AccountView({
         ) : (
           <>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
-              {(favsExpanded ? favs : favs.slice(0, 10)).map(({ r, v, count }) => (
+              {(favsExpanded ? favs : favs.slice(0, 6)).map(({ r, v, count }) => (
                 <button
                   key={r.slug}
                   onClick={() => onOpen(r)}
@@ -2551,17 +2348,17 @@ function AccountView({
                   {v === "super" && (
                     <span className="absolute top-1.5 right-1.5 w-6 h-6 rounded-full bg-[#d99a2b] flex items-center justify-center"><Star className="w-3.5 h-3.5 fill-white text-white" /></span>
                   )}
-                  <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded-full bg-black/50 backdrop-blur-sm text-white text-[12px] font-semibold tabular-nums flex items-center gap-1">
+                  <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 rounded-full bg-black/55 text-white text-[12px] font-semibold tabular-nums flex items-center gap-1">
                     <Heart className="w-3 h-3 fill-white" /> {count}×
                   </span>
                   <p className="absolute inset-x-0 bottom-0 p-2 text-white text-[13px] font-semibold leading-tight line-clamp-2 drop-shadow">{r.name}</p>
                 </button>
               ))}
             </div>
-            {favs.length > 10 && (
+            {favs.length > 6 && (
               <button
                 onClick={() => setFavsExpanded((v) => !v)}
-                className="mt-2.5 w-full py-2.5 rounded-xl bg-surface-elevated border border-border text-text-secondary text-xs font-semibold active:scale-[0.98] transition-transform"
+                className="mt-2.5 w-full min-h-11 rounded-xl bg-surface-elevated border border-border text-text-secondary text-[13px] font-semibold active:scale-[0.98] transition-transform"
               >
                 {favsExpanded ? "Weniger anzeigen" : `Alle ${favs.length} anzeigen`}
               </button>
@@ -2572,7 +2369,7 @@ function AccountView({
 
       {/* Schon gekocht (Sterne + Koch-Verlauf) */}
       <div className="order-6">
-        <h3 className="text-sm font-bold text-text-primary flex items-center gap-1.5 mb-2">
+        <h3 className="text-[15px] font-bold text-text-primary flex items-center gap-1.5 mb-2">
           <CookingPot className="w-4 h-4 text-accent" /> Schon gekocht
           {cooked.length > 0 && <span className="text-[11px] font-normal text-text-muted tabular-nums">({cooked.length})</span>}
         </h3>
@@ -2582,7 +2379,7 @@ function AccountView({
           </p>
         ) : (
           <div className="space-y-2">
-            {cooked.map(({ r, stars, lastCookedOn, withNames }) => (
+            {(cookedOpen ? cooked : cooked.slice(0, 4)).map(({ r, stars, lastCookedOn, withNames }) => (
               <button
                 key={r.slug}
                 onClick={() => onOpen(r)}
@@ -2608,6 +2405,12 @@ function AccountView({
                 </div>
               </button>
             ))}
+            {cooked.length > 4 && (
+              <button onClick={() => setCookedOpen((o) => !o)}
+                className="w-full min-h-11 rounded-xl bg-surface-elevated border border-border text-text-secondary text-[13px] font-semibold active:scale-[0.98] transition-transform">
+                {cookedOpen ? "Weniger anzeigen" : `Alle ${cooked.length} anzeigen`}
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -2935,7 +2738,7 @@ export default function RezeptePage() {
     Object.entries(map)
       .filter(([, e]) => isLike(e.v))
       .map(([slug, e]) => ({ slug, v: e.v, at: e.at }))
-      .sort((a, b) => Number(b.v === "super") - Number(a.v === "super") || b.at.localeCompare(a.at)), []);
+      .sort((a, b) => b.at.localeCompare(a.at)), []); // zuletzt Gewischtes oben (22.10.2026, vorher Superlikes zuerst)
   const todayPicks = useMemo(() => picksOf(todayMap), [picksOf, todayMap]);
   const yesterdayPicks = useMemo(
     () => (dayInfo.today ? picksOf(dayStore.days[shiftDay(dayInfo.today, -1)] ?? {}) : []),
@@ -3166,13 +2969,8 @@ export default function RezeptePage() {
     if (eveningGroup) postEvening({ action: "evening-pick", groupId: eveningGroup.id, slug: last.slug, verdict: null });
   }, [history, eveningGroup, postEvening]);
 
-  // Abend-Modus teilt sich index/history mit dem Entdecken-Stapel. Beim Betreten
-  // die Position merken und beim Verlassen zurückholen — sonst begann der normale
-  // Stapel wieder bei Karte 1 mit schon bewerteten Gerichten.
-  const startEvening = useCallback((id: string, name: string) => {
-    if (!eveningGroup) savedDeckPos.current = { index, history };
-    setEveningGroup({ id, name }); setIndex(0); setHistory([]); setMode("swipe");
-  }, [eveningGroup, index, history]);
+  // Abend-Modus (aus Gruppen, im Profil seit 22.10.2026 nicht mehr erreichbar): beim Verlassen
+  // die gemerkte Stapel-Position zurückholen.
   const exitEvening = useCallback(() => {
     const saved = savedDeckPos.current;
     savedDeckPos.current = null;
@@ -3366,7 +3164,6 @@ export default function RezeptePage() {
             onOpen={setDetail}
             onSuggest={() => setSuggestOpen(true)}
             onLogout={logout}
-            onPlanEvening={startEvening}
             onSaveDislikes={saveDislikes}
             onConnections={setFriends}
             todayPicks={todayPicks}
