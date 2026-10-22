@@ -3307,19 +3307,14 @@ export default function RezeptePage() {
         </div>
       </nav>
 
-      {/* Weicher Ausblender an der Unterkante (Raster, Profil). Seit 22.10.2026 als Kuppel um die
-          Navigation: links und rechts abgerundet wie die Leiste, statt gerader Kante über die ganze Breite. */}
+      {/* Weicher Ausblender an der Unterkante (Raster, Profil): volle Breite bis an den Bildschirmrand,
+          neben und unter der Navigation deckend (Bildschirmecken runden ihn außen ab), erst darüber
+          weich auslaufend. 22.10.2026: seitliches Ausblenden wieder raus, das schob die Rundung nach innen. */}
       {scrollMode && (
         <div
           aria-hidden
-          className="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-[calc(env(safe-area-inset-bottom)+7rem)] bg-bg"
-          style={{
-            // senkrecht ausblenden ∩ an den Seiten 28 px einblenden = weich abgerundete Ecken
-            WebkitMaskImage: "linear-gradient(to top, #000 38%, transparent 100%), linear-gradient(to right, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%)",
-            maskImage: "linear-gradient(to top, #000 38%, transparent 100%), linear-gradient(to right, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%)",
-            WebkitMaskComposite: "source-in",
-            maskComposite: "intersect",
-          }}
+          className="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-[calc(env(safe-area-inset-bottom)+14px+64px+3rem)]"
+          style={{ background: "linear-gradient(to top, var(--bg) 0%, var(--bg) calc(100% - 3rem - 32px), color-mix(in srgb, var(--bg) 0%, transparent) 100%)" }}
         />
       )}
 
