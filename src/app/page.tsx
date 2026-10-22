@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback, useRef } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef, memo } from "react";
 import { preload, createPortal } from "react-dom";
 import { motion, AnimatePresence, useReducedMotion, useMotionValue, useTransform, animate } from "framer-motion";
 import {
@@ -718,7 +718,10 @@ function DayDone({
 // bei 2 Spalten genau 5 volle Reihen. Vorher alle 6 → je Block ein Loch.
 // grid-flow-dense füllt Reste (4 Spalten auf großen Bildschirmen).
 
-function RecipeGrid({ recipes, onOpen, verdicts, counts }: { recipes: Recipe[]; onOpen: (r: Recipe) => void; verdicts?: Record<string, Verdict>; counts?: TrendCounts }) {
+// Weich scrollen (22.10.2026): keine framer-`layout`-Messung je Kachel (200 Kacheln wurden bei
+// jedem Rendern neu vermessen), kein backdrop-blur, Kacheln außerhalb des Bildschirms per
+// content-visibility übersprungen, und memo, damit Seiten-State das Raster nicht neu rendert.
+const RecipeGrid = memo(function RecipeGrid({ recipes, onOpen, verdicts, counts }: { recipes: Recipe[]; onOpen: (r: Recipe) => void; verdicts?: Record<string, Verdict>; counts?: TrendCounts }) {
   const isHero = (i: number) => i % 7 === 0;
 
   return (
@@ -727,10 +730,10 @@ function RecipeGrid({ recipes, onOpen, verdicts, counts }: { recipes: Recipe[]; 
         const hero = isHero(i);
         const c = counts?.[r.slug];
         return (
-          <motion.button
+          <button
             key={r.slug}
-            layout
             onClick={() => onOpen(r)}
+            style={{ contentVisibility: "auto", containIntrinsicSize: hero ? "auto 312px" : "auto 150px" }}
             className={`group relative rounded-2xl overflow-hidden text-left bg-surface-elevated active:scale-[0.98] transition-transform ${
               hero ? "col-span-2 row-span-2" : ""
             }`}
@@ -739,7 +742,7 @@ function RecipeGrid({ recipes, onOpen, verdicts, counts }: { recipes: Recipe[]; 
             <div className="absolute inset-x-0 bottom-0 h-3/5 bg-gradient-to-t from-black/90 via-black/40 to-transparent" />
             {/* Trending-Badge: wie oft geliked/super-geliked (öffentlich, keine Namen) */}
             {c && c.likes > 0 && (
-              <span className="absolute top-2 left-2 flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/55 backdrop-blur-sm text-white text-[10px] font-semibold tabular-nums">
+              <span className="absolute top-2 left-2 flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/60 text-white text-[10px] font-semibold tabular-nums">
                 <Heart className="w-2.5 h-2.5 fill-white" /> {c.likes}
                 {c.supers > 0 && <><Star className="w-2.5 h-2.5 fill-[#ffcf5c] text-[#ffcf5c] ml-0.5" /> {c.supers}</>}
               </span>
@@ -763,12 +766,12 @@ function RecipeGrid({ recipes, onOpen, verdicts, counts }: { recipes: Recipe[]; 
                 {hero && r.protein != null && <span>{r.protein}g P</span>}
               </div>
             </div>
-          </motion.button>
+          </button>
         );
       })}
     </div>
   );
-}
+});
 
 // ── Bilder-Galerie im Detail (swipebar) ───────────────────────
 
@@ -1077,6 +1080,34 @@ function RecipeDetail({
           </button>
         )}
 
+        {/* Über dem Bild (22.10.2026): Nährwerte, Video, Zeit. Die Bilder rutschen dadurch tiefer in
+            Daumenhöhe, wo sich besser wischen lässt. */}
+        <div className="px-4 mt-3 space-y-2">
+            {/* Nährwerte + Video-Link in einer Zeile */}
+            <div className="flex items-center gap-2">
+              <div className="flex-1 min-w-0"><MacroChips r={r} animate /></div>
+              {r.source && (
+                <a
+                  href={r.source}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="shrink-0 inline-flex items-center gap-1.5 min-h-11 pl-3.5 pr-4 rounded-full text-sm font-semibold active:scale-95 transition-transform text-white"
+                  style={{ background: isInstagram ? "linear-gradient(120deg,#f09433,#e6683c 30%,#dc2743 60%,#cc2366 90%)" : "var(--text-secondary)" }}
+                >
+                  {isInstagram ? <InstagramIcon className="w-4 h-4" /> : <ExternalLink className="w-4 h-4" />}
+                  {isInstagram ? "Video" : "Quelle"}
+                </a>
+              )}
+            </div>
+            {/* Zeit + Portionen: eine ruhige Zeile, keine Pills */}
+            {(r.totalTime || portions) && (
+              <p className="flex items-center gap-x-4 gap-y-1 flex-wrap text-[15px] text-text-primary">
+                {r.totalTime && <span className="inline-flex items-center gap-1.5"><Clock className="w-4 h-4 text-text-muted" />{r.totalTime}</span>}
+                {portions && <span className="inline-flex items-center gap-1.5"><Users className="w-4 h-4 text-text-muted" />{portions}</span>}
+              </p>
+            )}
+        </div>
+
         {/* Bilder: swipebar, ohne Verlauf darüber */}
         <div className="px-4 mt-3">
           <div className="relative aspect-[3/2] w-full overflow-hidden rounded-2xl bg-surface-elevated">
@@ -1103,34 +1134,10 @@ function RecipeDetail({
         </AnimatePresence>
 
         <div className="p-4 pt-3 pb-[calc(1rem+env(safe-area-inset-bottom))] space-y-3.5">
-          {/* Nährwerte + Video-Link in einer Zeile */}
-          <div className="flex items-center gap-2">
-            <div className="flex-1 min-w-0"><MacroChips r={r} animate /></div>
-            {r.source && (
-              <a
-                href={r.source}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="shrink-0 inline-flex items-center gap-1.5 min-h-11 pl-3.5 pr-4 rounded-full text-sm font-semibold active:scale-95 transition-transform text-white"
-                style={{ background: isInstagram ? "linear-gradient(120deg,#f09433,#e6683c 30%,#dc2743 60%,#cc2366 90%)" : "var(--text-secondary)" }}
-              >
-                {isInstagram ? <InstagramIcon className="w-4 h-4" /> : <ExternalLink className="w-4 h-4" />}
-                {isInstagram ? "Video" : "Quelle"}
-              </a>
-            )}
-          </div>
           {dislikeHitList.length > 0 && (
             <p className="text-[13px] text-[#bd5138] flex items-start gap-1.5">
               <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-px" />
               Enthält {dislikeHitList.join(", ")}, magst du laut deinem Account nicht.
-            </p>
-          )}
-
-          {/* Zeit + Portionen: eine ruhige Zeile, keine Pills */}
-          {(r.totalTime || portions) && (
-            <p className="flex items-center gap-x-4 gap-y-1 flex-wrap text-[15px] text-text-primary">
-              {r.totalTime && <span className="inline-flex items-center gap-1.5"><Clock className="w-4 h-4 text-text-muted" />{r.totalTime}</span>}
-              {portions && <span className="inline-flex items-center gap-1.5"><Users className="w-4 h-4 text-text-muted" />{portions}</span>}
             </p>
           )}
 
@@ -2710,10 +2717,8 @@ export default function RezeptePage() {
   const [hydrated, setHydrated] = useState(false);
   const [counts, setCounts] = useState<TrendCounts>({});
   const [search, setSearch] = useState("");
-  const [searchDimmed, setSearchDimmed] = useState(false);
   const [match, setMatch] = useState<{ recipe: Recipe; partners: MatchPing[] } | null>(null);
   const [eveningGroup, setEveningGroup] = useState<{ id: string; name: string } | null>(null);
-  const dimTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [fullRecipes, setFullRecipes] = useState<Record<string, Recipe>>({});
   const pendingGroupDone = useRef(false);
   const filteredRef = useRef<Recipe[]>([]);
@@ -3131,12 +3136,6 @@ export default function RezeptePage() {
       .map((x) => x.r);
   }, [recipes, verdicts, profile, dislikes, counts]);
 
-  // Suchfeld beim Scrollen dezent ausblenden, kurz nach Stillstand wieder einblenden.
-  const onGridScroll = useCallback(() => {
-    setSearchDimmed(true);
-    if (dimTimer.current) clearTimeout(dimTimer.current);
-    dimTimer.current = setTimeout(() => setSearchDimmed(false), 550);
-  }, []);
 
   // ── "Essensplan für heute Abend" ────────────────────────────────
   // Frischer Stapel nach Beliebtheit (mehr Likes zuerst), getrennt von den Favoriten.
@@ -3216,9 +3215,9 @@ export default function RezeptePage() {
   // Titel + Platzhalter-Karte erscheinen mit dem HTML, nicht erst nach dem JavaScript.
   if (!hydrated) return (
     <div className="app-h relative mx-auto w-full max-w-3xl flex flex-col px-4 pb-[calc(env(safe-area-inset-bottom)+14px+64px+14px)]">
-      <div className="shrink-0 pt-[calc(env(safe-area-inset-top)+0.75rem)]">
+      <div className="shrink-0 pt-[calc(env(safe-area-inset-top)+1.1rem)]">
         <div className="flex items-end justify-between gap-3 pt-1 pb-1">
-          <h1 className="text-[26px] font-extrabold tracking-tight leading-[1.1] text-text-primary">Entdecken</h1>
+          <h1 className="text-[26px] font-extrabold tracking-tight leading-[1.1] text-text-primary pl-2.5">Entdecken</h1>
         </div>
         <div className="h-[34px] mt-3" />
       </div>
@@ -3246,10 +3245,10 @@ export default function RezeptePage() {
   // Verlauf über dem Inhalt, der in Titel und Chips hineinragte). Oben bleibt nur ein
   // schmaler Ausblender, der schon in der Statusleiste ausläuft (bis 4 px darunter).
   const header = (
-    <div className={scrollMode ? "pt-[calc(env(safe-area-inset-top)+0.75rem)] pb-3" : "shrink-0 pt-[calc(env(safe-area-inset-top)+0.75rem)]"}>
+    <div className={scrollMode ? "pt-[calc(env(safe-area-inset-top)+1.1rem)] pb-3" : "shrink-0 pt-[calc(env(safe-area-inset-top)+1.1rem)]"}>
       {/* Großer Titel wie in Outfits; die Bereiche wechselt die Glas-Leiste unten */}
       <div className="flex items-end justify-between gap-3 pt-1 pb-1">
-        <h1 className="text-[26px] font-extrabold tracking-tight leading-[1.1] text-text-primary">
+        <h1 className={`text-[26px] font-extrabold tracking-tight leading-[1.1] text-text-primary ${mode === "account" ? "" : "pl-2.5"}`}>
           {mode === "swipe" ? (eveningGroup ? "Heute Abend" : "Entdecken") : mode === "grid" ? "Alle Gerichte" : "Profil"}
         </h1>
         {mode === "swipe" && !eveningGroup && (
@@ -3291,6 +3290,25 @@ export default function RezeptePage() {
           })}
         </div>
       )}
+
+      {/* Suche oben (22.10.2026, vorher schwebend unten über dem Raster: störte beim Scrollen) */}
+      {mode === "grid" && recipes.length > 0 && (
+        <div className="mt-2.5 flex items-center gap-2 h-11 px-4 rounded-full bg-surface/70 border border-border">
+          <Search className="w-4 h-4 text-text-muted shrink-0" />
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Rezept suchen…"
+            enterKeyHint="search"
+            className="flex-1 min-w-0 bg-transparent text-base text-text-primary placeholder:text-text-muted focus:outline-none"
+          />
+          {search && (
+            <button onClick={() => setSearch("")} aria-label="Suche leeren" className="shrink-0 -mr-2 w-9 h-9 flex items-center justify-center text-text-muted active:scale-90 transition-transform">
+              <X className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 
@@ -3310,7 +3328,6 @@ export default function RezeptePage() {
       {/* Inhalt */}
       <div
         ref={contentRef}
-        onScroll={mode === "grid" ? onGridScroll : undefined}
         className={deckLayout ? "flex-1 min-h-0 flex flex-col mt-4" : "flex-1 min-h-0 overflow-y-auto overflow-x-hidden -mx-4 px-4 pb-[calc(env(safe-area-inset-bottom)+14px+64px+2rem)]"}
       >
         {scrollMode && header}
@@ -3500,26 +3517,6 @@ export default function RezeptePage() {
           className="pointer-events-none absolute inset-x-0 bottom-0 z-20 h-[calc(env(safe-area-inset-bottom)+7rem)]"
           style={{ background: "linear-gradient(to top, var(--bg) 0%, var(--bg) 25%, color-mix(in srgb, var(--bg) 0%, transparent) 100%)" }}
         />
-      )}
-
-      {/* Schwebende Suche — nur im Raster, fadet beim Scrollen */}
-      {mode === "grid" && recipes.length > 0 && (
-        <div className={`absolute left-1/2 -translate-x-1/2 bottom-[calc(env(safe-area-inset-bottom)+14px+64px+10px)] z-40 w-[min(92%,28rem)] transition-opacity duration-300 ${searchDimmed ? "opacity-40" : "opacity-100"}`}>
-          <div className="flex items-center gap-2 px-4 py-2.5 rounded-full bg-surface/90 backdrop-blur-md border border-border shadow-lg">
-            <Search className="w-4 h-4 text-text-muted shrink-0" />
-            <input
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Rezept suchen…"
-              className="flex-1 min-w-0 bg-transparent text-sm text-text-primary placeholder:text-text-muted focus:outline-none"
-            />
-            {search && (
-              <button onClick={() => setSearch("")} aria-label="Suche leeren" className="shrink-0 text-text-muted active:scale-90 transition-transform">
-                <X className="w-4 h-4" />
-              </button>
-            )}
-          </div>
-        </div>
       )}
 
       {/* Detail-Sheet */}

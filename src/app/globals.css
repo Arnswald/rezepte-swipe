@@ -109,6 +109,14 @@ html, body {
 html.standalone .app-h {
   height: max(100dvh, min(var(--screen-h, 100dvh), calc(100dvh + 2 * env(safe-area-inset-top))));
 }
+/* Die Seite selbst scrollt nie (22.10.2026): Ist .app-h höher als der sichtbare Bereich, rutschte
+ * das ganze Dokument beim Hochwischen ein Stück nach oben, Titel und „Heute ♥“ gerieten unter den
+ * Weichzeichner, den iOS unter die Statusleiste legt. Scrollen dürfen nur die Inhalte darin. */
+html.standalone,
+html.standalone body {
+  overflow: hidden;
+  height: max(100dvh, var(--screen-h, 100dvh));
+}
 body {
   background: var(--bg);
   color: var(--text-primary);
