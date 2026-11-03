@@ -2440,7 +2440,7 @@ function AccountView({
               onChange={(e) => setDislikeInput(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addDislike(dislikeInput); } }}
               placeholder="z.B. Tomaten, Pilze …"
-              className="flex-1 min-w-0 bg-transparent text-sm text-text-primary placeholder:text-text-muted outline-none py-1"
+              className="flex-1 min-w-0 bg-transparent text-sm text-text-primary placeholder:text-text-muted outline-none py-3"
             />
             {dislikeInput.trim() && (
               <button onClick={() => addDislike(dislikeInput)} className="shrink-0 text-xs font-semibold text-accent px-2 py-1 rounded-lg active:scale-95 transition-transform">
@@ -3071,7 +3071,7 @@ export default function RezeptePage() {
                 key={cat}
                 onClick={() => setActiveCat(active ? "Alle" : cat)}
                 aria-pressed={active}
-                className={`relative min-h-9 px-1 rounded-full text-[13px] font-semibold whitespace-nowrap transition-colors active:scale-95 ${
+                className={`relative min-h-10 px-1 rounded-full text-[13px] font-semibold whitespace-nowrap transition-colors active:scale-95 ${
                   active ? "text-white" : "text-text-secondary"
                 }`}
               >

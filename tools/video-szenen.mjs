@@ -50,7 +50,7 @@ async function kandidaten(slug) {
   if (existsSync(join(dir, "bogen.jpg"))) return console.log(slug, "→ Bogen schon da");
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(dir, { recursive: true });
-  try { sh("yt-dlp", ["-q", "--no-warnings", "--socket-timeout", "30", "-f", "mp4/best", "-o", join(dir, "video.%(ext)s"), r.source]); } catch (e) { /* unten geprüft */ }
+  try { sh("yt-dlp", ["-q", "--no-warnings", "--socket-timeout", "30", "-f", "mp4/best", "-o", join(dir, "video.%(ext)s"), r.source]); } catch { /* unten geprüft */ }
   const video = readdirSync(dir).find((f) => f.startsWith("video."));
   if (!video) return console.log(slug, "→ kein Video (Bildbeitrag oder gesperrt)");
   const vpath = join(dir, video);

@@ -81,7 +81,7 @@ export function Einreichungen({ pin }: { pin: string }) {
             <button
               key={f}
               onClick={() => setFilter(f)}
-              className={`min-h-9 px-3 rounded-full transition-colors ${filter === f ? "bg-surface text-text-primary border border-border" : "text-text-muted"}`}
+              className={`min-h-11 px-3 rounded-full transition-colors ${filter === f ? "bg-surface text-text-primary border border-border" : "text-text-muted"}`}
             >
               {f === "eingereicht" ? "Offen" : "Abgelehnt"} {counts[f] ? `(${counts[f]})` : ""}
             </button>

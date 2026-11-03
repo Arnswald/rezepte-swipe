@@ -5,7 +5,7 @@
 // Ohne --hochladen landet das Bild nur in ./ki-vorschau/<slug>.png zum Ansehen.
 // Mit --hochladen: POST /api/admin/recipes/<slug>/bild (rolle ki, wird Kartenbild).
 // Schlüssel: FAL_KEY aus der .env im Vault, Server-Schlüssel aus ~/.config/second-brain/rezepte-server.key.
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 

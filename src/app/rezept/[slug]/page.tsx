@@ -11,6 +11,7 @@
 
 import type { Metadata } from "next";
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { Clock, Users, Flame, ChevronRight, ArrowLeft, ExternalLink } from "lucide-react";
 import { getRecipeBySlug, type Recipe } from "@/lib/recipes";
 import { ShareButton } from "@/components/ShareButton";
@@ -53,30 +54,10 @@ export async function generateMetadata(
   };
 }
 
-function NotFound() {
-  return (
-    <main className="min-h-[100dvh] flex items-center justify-center p-6" style={{ background: "var(--bg)" }}>
-      <div className="text-center max-w-sm">
-        <div className="text-5xl mb-4">🤔</div>
-        <h1 className="text-xl font-extrabold text-text-primary">Rezept nicht gefunden</h1>
-        <p className="text-sm text-text-secondary mt-2">
-          Vielleicht wurde es umbenannt. Schau in der App vorbei:
-        </p>
-        <Link
-          href="/"
-          className="mt-5 inline-flex items-center gap-1 px-4 py-2.5 rounded-xl bg-accent text-white text-sm font-semibold"
-        >
-          Zur Rezepte-App <ChevronRight className="w-4 h-4" />
-        </Link>
-      </div>
-    </main>
-  );
-}
-
 export default async function RezeptPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
   const r: Recipe | null = getRecipeBySlug(slug);
-  if (!r) return <NotFound />;
+  if (!r) notFound();
 
   const hero = img(r, 1080, "webp");
   const macros = [
