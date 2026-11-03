@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Share2, Check } from "lucide-react";
 import { useToast } from "@/components/ui/Toast";
+import { nativeShare } from "@/lib/native";
 
 /**
  * Teilt ein Rezept. Auf dem iPhone öffnet `navigator.share` das native Share-Sheet
@@ -30,6 +31,8 @@ export function ShareButton({
       (typeof window !== "undefined" ? window.location.origin : "") + `/rezept/${slug}`;
     const text = `${name} — schau dir dieses Rezept an:`;
 
+    // 0) App-Hülle: natives Teilen-Menü
+    if (await nativeShare({ title: name, text, url })) return;
     // 1) Natives Share-Sheet (iOS/Android)
     if (typeof navigator !== "undefined" && navigator.share) {
       try {

@@ -8,6 +8,7 @@
  * einzige „Zugangskennung" des Gasts ist — nicht in Logs/Query-Strings landen lassen.
  */
 
+import { resolveGuestId } from "@/lib/session";
 import { NextResponse } from "next/server";
 import { ensureGuest } from "@/lib/db";
 
@@ -16,7 +17,7 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   try {
     const b = (await req.json().catch(() => ({}))) as { guestId?: string; name?: string };
-    const guestId = (b.guestId ?? "").trim().slice(0, 64);
+    const guestId = resolveGuestId(req, b.guestId);
     const name = (b.name ?? "").trim().slice(0, 80);
     if (!guestId || !name) {
       return NextResponse.json({ error: "guestId und name sind Pflicht" }, { status: 400 });

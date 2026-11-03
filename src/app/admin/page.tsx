@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useSyncExternalStore } from "react";
+import { isNativeApp } from "@/lib/native";
 import { motion } from "framer-motion";
 import { Loader2, RefreshCw, LogOut, Heart, Star, X, ChevronDown, Lock, Trash2, Copy, Link2, Plus } from "lucide-react";
 import { AnimatedInput } from "@/components/ui/AnimatedInput";
@@ -48,7 +49,20 @@ const VERDICT_LABEL: Record<Recent["verdict"], { text: string; cls: string }> = 
   nope: { text: "✕ nö", cls: "text-[#bd5138]" },
 };
 
+/** In der iOS-App gibt es keine Verwaltung (nur im Browser); Store-Prüfer sollen nichts Verwaltendes sehen. */
 export default function AdminPage() {
+  const inApp = useSyncExternalStore(() => () => {}, () => isNativeApp(), () => false);
+  if (inApp) {
+    return (
+      <main className="min-h-[100dvh] flex items-center justify-center p-6 text-center" style={{ background: "var(--bg)" }}>
+        <p className="text-sm text-text-secondary">Diese Seite gibt es nur im Browser.</p>
+      </main>
+    );
+  }
+  return <AdminSeite />;
+}
+
+function AdminSeite() {
   const [pin, setPin] = useState("");
   const [authed, setAuthed] = useState(false);
   const [stats, setStats] = useState<Stats | null>(null);

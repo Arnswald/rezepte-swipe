@@ -9,7 +9,7 @@
 import Database from "better-sqlite3";
 import { existsSync, mkdirSync } from "fs";
 import { join } from "path";
-import { randomUUID, scryptSync, randomBytes, timingSafeEqual } from "crypto";
+import { randomUUID, scryptSync, randomBytes, timingSafeEqual, createHash } from "crypto";
 import { env } from "@/lib/env";
 import { dayKey, shiftDay } from "@/lib/day";
 
@@ -155,6 +155,16 @@ function getDb(): Database.Database {
       PRIMARY KEY (guest_id, slug, day)
     );
     CREATE INDEX IF NOT EXISTS idx_swipe_days_guest_day ON swipe_days(guest_id, day);
+
+    -- v11: Sitzungen. Das Token (32 zufällige Bytes) steht nur beim Gerät; hier liegt nur sein SHA-256.
+    CREATE TABLE IF NOT EXISTS sessions (
+      token_hash  TEXT PRIMARY KEY,
+      guest_id    TEXT NOT NULL,
+      created_at  TEXT NOT NULL,
+      last_used   TEXT NOT NULL,
+      expires_at  TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_sessions_guest ON sessions(guest_id);
   `);
   migrate(database);
   globalForDb.rezepteDb = database;
@@ -581,6 +591,7 @@ export function deleteGuestCascade(guestId: string): { verdicts: number; connect
     db.prepare(`DELETE FROM preferences WHERE guest_id = ?`).run(id);
     db.prepare(`DELETE FROM cook_events WHERE author_guest = ? OR partner_guest = ?`).run(id, id);
     db.prepare(`DELETE FROM accounts WHERE guest_id = ?`).run(id);
+    db.prepare(`DELETE FROM sessions WHERE guest_id = ?`).run(id);
     const guest = db.prepare(`DELETE FROM guests WHERE guest_id = ?`).run(id).changes;
     return { verdicts, connections, guest };
   });
@@ -1006,4 +1017,81 @@ export function deleteGroup(groupId: string): { members: number; group: number }
     };
   });
   return tx(groupId);
+}
+
+
+// ── v11: Sitzungen (Token statt nackter guestId) ──────────────────────────────
+
+const SESSION_DAYS = 365;
+const hashToken = (t: string) => createHash("sha256").update(t).digest("hex");
+
+/** Neue Sitzung für eine Identität; gibt das Klartext-Token zurück (nur hier, nie gespeichert). */
+export function createSession(guestId: string, now = new Date()): { token: string; expiresAt: string } {
+  const token = randomBytes(32).toString("base64url");
+  const expiresAt = new Date(now.getTime() + SESSION_DAYS * 86400_000).toISOString();
+  const iso = now.toISOString();
+  getDb().prepare(`INSERT INTO sessions (token_hash, guest_id, created_at, last_used, expires_at) VALUES (?, ?, ?, ?, ?)`)
+    .run(hashToken(token), guestId, iso, iso, expiresAt);
+  return { token, expiresAt };
+}
+
+/** Zu einem Token die Identität, oder null (unbekannt/abgelaufen). Läuft ein Token ab, wird es entfernt. */
+export function guestForToken(token: string, now = new Date()): string | null {
+  if (!token || token.length > 200) return null;
+  const db = getDb();
+  const h = hashToken(token);
+  const row = db.prepare(`SELECT guest_id, expires_at FROM sessions WHERE token_hash = ?`).get(h) as { guest_id: string; expires_at: string } | undefined;
+  if (!row) return null;
+  if (row.expires_at < now.toISOString()) { db.prepare(`DELETE FROM sessions WHERE token_hash = ?`).run(h); return null; }
+  db.prepare(`UPDATE sessions SET last_used = ? WHERE token_hash = ?`).run(now.toISOString(), h);
+  return row.guest_id;
+}
+
+export function deleteSession(token: string): number {
+  return getDb().prepare(`DELETE FROM sessions WHERE token_hash = ?`).run(hashToken(token)).changes;
+}
+
+export function guestHasSession(guestId: string): boolean {
+  return !!getDb().prepare(`SELECT 1 FROM sessions WHERE guest_id = ? LIMIT 1`).get(guestId);
+}
+
+export function getAccountForGuest(guestId: string): { username: string; password_hash: string } | undefined {
+  return getDb().prepare(`SELECT username, password_hash FROM accounts WHERE guest_id = ?`).get(guestId) as { username: string; password_hash: string } | undefined;
+}
+
+export function checkPasswordForGuest(guestId: string, password: string): boolean {
+  const a = getAccountForGuest(guestId);
+  return !!a && verifyPassword(password, a.password_hash);
+}
+
+/**
+ * Konto/Gast selbst löschen (App-Store 5.1.1(v)). Entfernt alles, was der Person gehört:
+ * Bewertungen, Tageseinträge, Sterne, Vorlieben, eigene Koch-Einträge, Verbindungen,
+ * Gruppen-Mitgliedschaften (leere Gruppen verschwinden), Account, Sitzungen, Gast.
+ * Koch-Einträge anderer, in denen die Person nur Partner war, bleiben ohne Partner stehen.
+ * Alles in einer Transaktion: Admin-Auswertung (aus verdicts/guests) bleibt konsistent.
+ */
+export function deleteOwnAccount(guestId: string): { verdicts: number; guest: number } {
+  const db = getDb();
+  const tx = db.transaction((id: string) => {
+    const verdicts = db.prepare(`DELETE FROM verdicts WHERE guest_id = ?`).run(id).changes;
+    db.prepare(`DELETE FROM connections WHERE guest_a = ? OR guest_b = ?`).run(id, id);
+    db.prepare(`DELETE FROM group_members WHERE guest_id = ?`).run(id);
+    db.prepare(`DELETE FROM evening_picks WHERE guest_id = ?`).run(id);
+    db.prepare(`DELETE FROM swipe_days WHERE guest_id = ?`).run(id);
+    db.prepare(`DELETE FROM ratings WHERE guest_id = ?`).run(id);
+    db.prepare(`DELETE FROM preferences WHERE guest_id = ?`).run(id);
+    db.prepare(`DELETE FROM cook_events WHERE author_guest = ?`).run(id);
+    db.prepare(`UPDATE cook_events SET partner_guest = NULL WHERE partner_guest = ?`).run(id);
+    db.prepare(`DELETE FROM accounts WHERE guest_id = ?`).run(id);
+    db.prepare(`DELETE FROM sessions WHERE guest_id = ?`).run(id);
+    const guest = db.prepare(`DELETE FROM guests WHERE guest_id = ?`).run(id).changes;
+    // Eingereichte Rezepte bleiben (Christian prüft/veröffentlicht sie), aber ohne Bezug zur Person.
+    try { db.prepare(`UPDATE recipes SET eingereicht_von = NULL, eingereicht_name = NULL WHERE eingereicht_von = ?`).run(id); } catch { /* Tabelle nur bei RECIPE_SOURCE=db */ }
+    // Gruppen ohne Mitglieder aufräumen
+    db.prepare(`DELETE FROM evening_picks WHERE group_id IN (SELECT group_id FROM groups WHERE group_id NOT IN (SELECT group_id FROM group_members))`).run();
+    db.prepare(`DELETE FROM groups WHERE group_id NOT IN (SELECT group_id FROM group_members)`).run();
+    return { verdicts, guest };
+  });
+  return tx(guestId);
 }

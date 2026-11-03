@@ -5,6 +5,7 @@
  * damit es sich schon vor der Freigabe öffnen lässt. Nur mit RECIPE_SOURCE=db, sonst leer.
  */
 
+import { resolveGuestId } from "@/lib/session";
 import { NextResponse } from "next/server";
 import { RECIPE_SOURCE, publicRecipe } from "@/lib/recipes";
 import { recipeStore, type StoredCheck } from "@/lib/recipeStore";
@@ -14,7 +15,7 @@ export const dynamic = "force-dynamic";
 
 export async function POST(req: Request) {
   const b = (await req.json().catch(() => ({}))) as { guestId?: string };
-  const guestId = (b.guestId ?? "").trim().slice(0, 64);
+  const guestId = resolveGuestId(req, b.guestId);
   if (!guestId) return NextResponse.json({ error: "guestId fehlt" }, { status: 400 });
   if (RECIPE_SOURCE !== "db") return NextResponse.json({ einreichungen: [] });
   const store = recipeStore();

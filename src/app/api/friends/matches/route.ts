@@ -8,6 +8,7 @@
  * POST (nicht GET), damit der guestId nicht in der URL/Logs landet.
  */
 
+import { resolveGuestId } from "@/lib/session";
 import { NextResponse } from "next/server";
 import { ensureGuest, getConnections, getMatches } from "@/lib/db";
 
@@ -16,7 +17,7 @@ export const dynamic = "force-dynamic";
 export async function POST(req: Request) {
   try {
     const b = (await req.json().catch(() => ({}))) as { guestId?: string; name?: string };
-    const guestId = (b.guestId ?? "").trim().slice(0, 64);
+    const guestId = resolveGuestId(req, b.guestId);
     const name = (b.name ?? "").trim().slice(0, 80);
     if (!guestId) {
       return NextResponse.json({ error: "guestId ist Pflicht" }, { status: 400 });

@@ -21,6 +21,7 @@
  *         source, submittedBy, image (File, optional)
  */
 
+import { resolveGuestId } from "@/lib/session";
 import { NextResponse } from "next/server";
 import { env } from "@/lib/env";
 import { mkdir, writeFile } from "fs/promises";
@@ -113,7 +114,7 @@ export async function POST(req: Request) {
 
     const mode = (get("mode") || "text").toLowerCase();
     const submittedBy = get("submittedBy").slice(0, 80) || "Anonym";
-    const guestId = get("guestId").slice(0, 64) || null;
+    const guestId = resolveGuestId(req, get("guestId")) || null;
     const db = RECIPE_SOURCE === "db";
     if (db && zuViele(guestId ?? clientIp(req))) {
       return NextResponse.json({ error: "Das waren viele Rezepte auf einmal. Bitte in einer Stunde nochmal." }, { status: 429 });

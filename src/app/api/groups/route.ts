@@ -9,6 +9,7 @@
  * POST statt GET, damit guestId (die Zugangskennung) nicht in URL/Logs landet.
  */
 
+import { resolveGuestId } from "@/lib/session";
 import { NextResponse } from "next/server";
 import { blocked, fail, LIMITS } from "@/lib/guard";
 import {
@@ -27,7 +28,7 @@ export async function POST(req: Request) {
       slug?: string; recipeName?: string; category?: string; verdict?: string | null;
     };
     const action = b.action ?? "";
-    const guestId = (b.guestId ?? "").trim().slice(0, 64);
+    const guestId = resolveGuestId(req, b.guestId);
     const name = (b.name ?? "").trim().slice(0, 80);
     if (!guestId) return NextResponse.json({ error: "guestId ist Pflicht" }, { status: 400 });
 

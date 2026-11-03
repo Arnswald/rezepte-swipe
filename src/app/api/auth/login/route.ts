@@ -8,8 +8,9 @@
  */
 
 import { NextResponse } from "next/server";
+import { attachSession } from "@/lib/session";
 import { blocked, fail, succeed, LIMITS } from "@/lib/guard";
-import { loginAccount, getVerdictsForGuest } from "@/lib/db";
+import { loginAccount, createSession, getVerdictsForGuest } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -29,7 +30,8 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Benutzername oder Passwort falsch." }, { status: 401 });
     }
     succeed(req, LIMITS.login);
-    return NextResponse.json({ guestId: res.guestId, name: res.name, verdicts: getVerdictsForGuest(res.guestId) });
+    const { token } = createSession(res.guestId);
+    return attachSession(NextResponse.json({ guestId: res.guestId, name: res.name, verdicts: getVerdictsForGuest(res.guestId), token }), token);
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
   }

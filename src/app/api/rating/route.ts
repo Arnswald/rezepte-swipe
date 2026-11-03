@@ -7,6 +7,7 @@
  *   stars = null  → löschen
  */
 
+import { resolveGuestId } from "@/lib/session";
 import { NextResponse } from "next/server";
 import { upsertRating, deleteRating, ensureGuest } from "@/lib/db";
 
@@ -19,7 +20,7 @@ export async function POST(req: Request) {
       recipeName?: string; category?: string; stars?: number | null;
     };
 
-    const guestId = (b.guestId ?? "").trim().slice(0, 64);
+    const guestId = resolveGuestId(req, b.guestId);
     const name = (b.name ?? "").trim().slice(0, 80);
     const slug = (b.slug ?? "").trim().slice(0, 200);
     if (!guestId || !name || !slug) {

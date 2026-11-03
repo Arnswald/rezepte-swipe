@@ -15,6 +15,7 @@
  * Swipes, Uhren-Abweichung), sonst gilt der heutige Tag des Servers.
  */
 
+import { resolveGuestId } from "@/lib/session";
 import { NextResponse } from "next/server";
 import {
   upsertVerdict, deleteVerdict, applySwipeVerdict, setSwipeDay, swipeWindow,
@@ -35,7 +36,7 @@ export async function POST(req: Request) {
       day?: string; swipedAt?: string; undo?: boolean; dayVerdict?: string | null;
     };
 
-    const guestId = (b.guestId ?? "").trim().slice(0, 64);
+    const guestId = resolveGuestId(req, b.guestId);
     const name = (b.name ?? "").trim().slice(0, 80);
     const slug = (b.slug ?? "").trim().slice(0, 200);
     if (!guestId || !name || !slug) {

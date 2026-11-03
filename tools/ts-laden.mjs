@@ -16,6 +16,8 @@ registerHooks({
       const cand = [`${base}.ts`, `${base}.tsx`, join(base, "index.ts")].find((c) => existsSync(c));
       if (cand) return { url: pathToFileURL(cand).href, shortCircuit: true, format: "module-typescript" };
     }
+    // Next-Subpfade haben keine Endung; im reinen Node-ESM (Tests) braucht es „.js“.
+    if (/^next\/(server|headers)$/.test(specifier)) return nextResolve(`${specifier}.js`, context);
     return nextResolve(specifier, context);
   },
   // JSON aus src/ (z. B. kartenbild.json) wie der Bundler laden: ohne `with { type: "json" }`

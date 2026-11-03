@@ -6,6 +6,7 @@
  *   → { ok:true, partner:{ name }, already }  |  { error }
  */
 
+import { resolveGuestId } from "@/lib/session";
 import { NextResponse } from "next/server";
 import { blocked, fail, LIMITS } from "@/lib/guard";
 import { ensureGuest, connectByCode } from "@/lib/db";
@@ -17,7 +18,7 @@ export async function POST(req: Request) {
     const b = (await req.json().catch(() => ({}))) as {
       guestId?: string; name?: string; code?: string;
     };
-    const guestId = (b.guestId ?? "").trim().slice(0, 64);
+    const guestId = resolveGuestId(req, b.guestId);
     const name = (b.name ?? "").trim().slice(0, 80);
     const code = (b.code ?? "").trim().slice(0, 40);
     if (!guestId || !name || !code) {

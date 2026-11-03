@@ -8,7 +8,8 @@
  */
 
 import { NextResponse } from "next/server";
-import { registerAccount, getVerdictsForGuest } from "@/lib/db";
+import { attachSession, resolveGuestId } from "@/lib/session";
+import { registerAccount, createSession, getVerdictsForGuest } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +18,7 @@ export async function POST(req: Request) {
     const b = (await req.json().catch(() => ({}))) as { username?: string; password?: string; guestId?: string };
     const username = (b.username ?? "").trim().slice(0, 40);
     const password = String(b.password ?? "");
-    const guestId = (b.guestId ?? "").trim().slice(0, 64) || null;
+    const guestId = resolveGuestId(req, b.guestId) || null;
     if (!username || !password) {
       return NextResponse.json({ error: "Benutzername und Passwort sind Pflicht." }, { status: 400 });
     }
@@ -26,7 +27,8 @@ export async function POST(req: Request) {
       if (res.reason === "taken") return NextResponse.json({ error: "Diesen Benutzernamen gibt es schon." }, { status: 409 });
       return NextResponse.json({ error: "Benutzername min. 2, Passwort min. 4 Zeichen." }, { status: 400 });
     }
-    return NextResponse.json({ guestId: res.guestId, name: res.name, verdicts: getVerdictsForGuest(res.guestId) });
+    const { token } = createSession(res.guestId);
+    return attachSession(NextResponse.json({ guestId: res.guestId, name: res.name, verdicts: getVerdictsForGuest(res.guestId), token }), token);
   } catch (err) {
     return NextResponse.json({ error: err instanceof Error ? err.message : String(err) }, { status: 500 });
   }

@@ -25,6 +25,7 @@ import { Lens } from "@/components/ui/Lens";
 import { AnimatedInput } from "@/components/ui/AnimatedInput";
 import { useToast } from "@/components/ui/Toast";
 import { dayKey, shiftDay, showYesterday } from "@/lib/day";
+import { haptic, keepScreenAwake, nativeShare } from "@/lib/native";
 
 // ── Types ─────────────────────────────────────────────────────
 
@@ -509,6 +510,7 @@ function SwipeDeck({
   const commit = useCallback((v: Verdict) => {
     if (!current || flying.current) return;
     flying.current = true;
+    haptic(v === "super" ? "success" : v === "like" ? "medium" : "light");
     const tx = v === "like" ? 560 : v === "nope" ? -560 : 0;
     const ty = v === "super" ? -720 : 60;
     const finish = () => {
@@ -980,6 +982,11 @@ function RecipeDetail({
   useEffect(() => {
     document.body.style.overflow = "hidden";
     return () => { document.body.style.overflow = ""; };
+  }, []);
+  // In der App: Bildschirm bleibt an, solange ein Rezept offen ist (beim Kochen)
+  useEffect(() => {
+    keepScreenAwake(true);
+    return () => keepScreenAwake(false);
   }, []);
   useEffect(() => {
     const el = scrollRef.current;
@@ -2014,6 +2021,67 @@ function TodayGrid({ picks, onOpen, onRemove }: {
 // Ein Eintrag in „Heute gemerkt“ / „Gestern“
 interface DayPick { slug: string; v: Verdict; at: string }
 
+// ── Konto löschen (App Store 5.1.1(v)): Bestätigung im Text der Seite, kein Browser-Dialog ──
+function DeleteAccount({ guestId, onDeleted }: { guestId: string; onDeleted: () => void }) {
+  const [open, setOpen] = useState(false);
+  const [password, setPassword] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const run = async () => {
+    setBusy(true); setErr(null);
+    try {
+      const res = await fetch("/api/me", {
+        method: "DELETE", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ guestId, password, confirm: true }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { setErr((d.error as string) ?? "Hat nicht geklappt."); return; }
+      onDeleted();
+    } catch {
+      setErr("Keine Verbindung. Versuch's gleich nochmal.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="order-15 w-full min-h-11 py-2.5 rounded-xl text-text-muted text-sm font-medium active:scale-[0.98] transition-transform"
+      >
+        Konto löschen
+      </button>
+    );
+  }
+  return (
+    <div className="order-15 w-full rounded-2xl border border-red-500/40 bg-red-500/5 p-4 text-left">
+      <p className="text-sm font-bold text-text-primary">Konto endgültig löschen?</p>
+      <p className="text-xs text-text-secondary mt-1.5 leading-relaxed">
+        Das löscht dein Konto und alles, was daran hängt: deine Bewertungen und Sterne, „Heute gemerkt“, deine Abneigungen, dein Koch-Verlauf, Freundes-Verbindungen und Gruppen-Mitgliedschaften.
+        Eingereichte Rezepte bleiben, aber ohne deinen Namen. Das lässt sich nicht rückgängig machen.
+      </p>
+      <input
+        type="password" value={password} onChange={(e) => setPassword(e.target.value)}
+        autoComplete="current-password" placeholder="Dein Passwort zur Bestätigung"
+        className="mt-3 w-full bg-surface-elevated rounded-xl px-3 py-3 text-sm text-text-primary placeholder:text-text-muted outline-none"
+      />
+      {err && <p className="text-xs text-red-500 mt-2">{err}</p>}
+      <div className="flex gap-2 mt-3">
+        <button type="button" onClick={() => { setOpen(false); setPassword(""); setErr(null); }} disabled={busy}
+          className="flex-1 min-h-11 rounded-xl bg-surface-elevated text-text-primary text-sm font-semibold active:scale-[0.98] transition-transform">
+          Abbrechen
+        </button>
+        <button type="button" onClick={run} disabled={busy}
+          className="flex-1 min-h-11 rounded-xl bg-red-600 text-white text-sm font-semibold active:scale-[0.98] transition-transform disabled:opacity-60">
+          {busy ? "Löscht …" : "Endgültig löschen"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function AccountView({
   guestId, guestName, recipes, verdicts, ratings, dislikes, cookEvents, onOpen, onSuggest, onLogout, onSaveDislikes, onConnections,
   todayPicks, yesterdayPicks, yesterdayVisible, likeCounts, onGoSwipe, submitTick, onRemoveToday,
@@ -2149,6 +2217,7 @@ function AccountView({
   };
   const invite = async () => {
     const text = inviteText();
+    if (await nativeShare({ title: "Rezepte-Match", text })) return;
     if (typeof navigator !== "undefined" && navigator.share) {
       try { await navigator.share({ title: "Rezepte-Match", text }); return; } catch (e) { if ((e as Error)?.name === "AbortError") return; /* sonst Fallback */ }
     }
@@ -2470,6 +2539,10 @@ function AccountView({
       >
         <LogOut className="w-4 h-4" /> Abmelden
       </button>
+      <DeleteAccount guestId={guestId} onDeleted={onLogout} />
+      <a href="/datenschutz" className="order-16 w-full min-h-11 py-2.5 rounded-xl text-text-muted text-sm font-medium flex items-center justify-center active:scale-[0.98] transition-transform">
+        Datenschutz
+      </a>
       {confirmDialog}
     </div>
   );
@@ -2663,6 +2736,7 @@ export default function RezeptePage() {
 
   // Abmelden: lokale Identität + Cache löschen → Auth-Gate erscheint wieder.
   const logout = useCallback(() => {
+    fetch("/api/session", { method: "DELETE" }).catch(() => { /* offline egal */ });
     try { localStorage.removeItem(NAME_KEY); localStorage.removeItem(ID_KEY); localStorage.removeItem(FAV_KEY); localStorage.removeItem(RATE_KEY); localStorage.removeItem(DISLIKE_KEY); localStorage.removeItem(DAYS_KEY); } catch { /* ignore */ }
     dayStoreRef.current = EMPTY_DAYS; setDayStore(EMPTY_DAYS);
     startedRef.current = false; touchedRef.current.clear(); savedDeckPos.current = null; setDeckList([]);
