@@ -3,6 +3,7 @@
  * Veröffentlichte Rezepte, die nicht aus Obsidian stammen und seit `seit` geändert wurden,
  * als Kochbuch-Markdown. Der Mac schreibt sie nach 06 Research/Gerichte (Kopie, die App
  * bleibt führend). Bilder einzeln über /api/admin/bild/<datei>.
+ * Eigene Rezepte der Nutzer (privat = 1) gehen nie in den Vault.
  * 200 { jetzt, rezepte: [{ slug, geaendertAm, markdown, bilder: [{ datei, rolle, sha1 }] }] }
  */
 
@@ -20,7 +21,7 @@ export async function GET(req: Request) {
   const jetzt = new Date().toISOString();
   const store = recipeStore();
   const zeilen = store.db
-    .prepare(`SELECT * FROM recipes WHERE status = 'veroeffentlicht' AND herkunft != 'obsidian' AND geaendert_am > ? ORDER BY geaendert_am`)
+    .prepare(`SELECT * FROM recipes WHERE status = 'veroeffentlicht' AND herkunft != 'obsidian' AND privat = 0 AND geaendert_am > ? ORDER BY geaendert_am`)
     .all(seit) as { id: number; slug: string; geaendert_am: string; eingereicht_name: string | null }[];
   const rezepte = zeilen.map((z) => {
     const r = store.get(z.slug, { status: "alle" })!;

@@ -1135,6 +1135,8 @@ export function deleteOwnAccount(guestId: string): { verdicts: number; guest: nu
     db.prepare(`DELETE FROM sessions WHERE guest_id = ?`).run(id);
     const guest = db.prepare(`DELETE FROM guests WHERE guest_id = ?`).run(id).changes;
     // Eingereichte Rezepte bleiben (Christian prüft/veröffentlicht sie), aber ohne Bezug zur Person.
+    // Eigene (private) Rezepte werden ausgeblendet, nicht gelöscht (Datei und Zeile bleiben).
+    try { db.prepare(`UPDATE recipes SET ausgeblendet_am = COALESCE(ausgeblendet_am, ?) WHERE eingereicht_von = ? AND privat = 1`).run(new Date().toISOString(), id); } catch { /* Tabelle nur bei RECIPE_SOURCE=db / vor Schema v2 */ }
     try { db.prepare(`UPDATE recipes SET eingereicht_von = NULL, eingereicht_name = NULL WHERE eingereicht_von = ?`).run(id); } catch { /* Tabelle nur bei RECIPE_SOURCE=db */ }
     // Gruppen ohne Mitglieder aufräumen
     db.prepare(`DELETE FROM evening_picks WHERE group_id IN (SELECT group_id FROM groups WHERE group_id NOT IN (SELECT group_id FROM group_members))`).run();

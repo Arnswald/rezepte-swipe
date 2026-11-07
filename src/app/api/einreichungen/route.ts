@@ -22,7 +22,7 @@ export async function POST(req: Request) {
   if (RECIPE_SOURCE !== "db") return NextResponse.json({ einreichungen: [] });
   const store = recipeStore();
   const rows = store.db
-    .prepare(`SELECT slug, status, status_grund, pruefung, erstellt_am FROM recipes WHERE eingereicht_von = ? ORDER BY erstellt_am DESC LIMIT 30`)
+    .prepare(`SELECT slug, status, status_grund, pruefung, erstellt_am FROM recipes WHERE eingereicht_von = ? AND privat = 0 ORDER BY erstellt_am DESC LIMIT 30`)
     .all(guestId) as { slug: string; status: string; status_grund: string | null; pruefung: string | null; erstellt_am: string }[];
   const einreichungen = rows.map((row) => {
     let phase: StoredCheck["phase"] = "fertig";

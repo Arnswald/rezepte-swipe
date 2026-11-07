@@ -31,6 +31,11 @@
  *  - alle sehen `veroeffentlicht` (Christians Rezepte + freigegebene Einreichungen)
  *  - wer einreicht, sieht seine `eingereicht`-Rezepte sofort selbst (eingereicht_von = guestId)
  *  - `abgelehnt` sieht nur der Admin
+ *
+ * Eigene Rezepte (Schema v2, 07.11.2026): `privat = 1`. Sieht nur, wer es angelegt hat
+ * (eingereicht_von), und wer mit ihm verbunden ist („Zu zweit“, viewerGuestIds). Nie im
+ * öffentlichen Stapel, nie im Vault-Export, nie in der Dubletten-Prüfung anderer.
+ * Löschen gibt es nicht: `ausgeblendet_am` gesetzt = für alle weg (Admin sieht es weiter).
  */
 
 import Database from "better-sqlite3";
@@ -39,7 +44,7 @@ import { dirname, join } from "path";
 import { env } from "@/lib/env";
 import type { IngredientGroup, Recipe } from "@/lib/recipes";
 
-export const RECIPE_SCHEMA_VERSION = 1;
+export const RECIPE_SCHEMA_VERSION = 2;
 
 export type RecipeStatus = "veroeffentlicht" | "eingereicht" | "abgelehnt";
 export const RECIPE_STATUSES: readonly RecipeStatus[] = ["veroeffentlicht", "eingereicht", "abgelehnt"];
@@ -97,6 +102,10 @@ export interface RecipeRow {
   obsidian_original: string | null;
   obsidian_hash: string | null;
   obsidian_export_hash: string | null;
+  /** 1 = eigenes Rezept (nur Ersteller + Verbundene), seit Schema v2 */
+  privat: number;
+  /** ISO-Zeitpunkt, an dem der Ersteller es ausgeblendet hat (statt Löschen) */
+  ausgeblendet_am: string | null;
   erstellt_am: string;
   geaendert_am: string;
   freigegeben_am: string | null;
@@ -151,6 +160,8 @@ export interface RecipeInput {
   obsidianFile?: string | null;
   obsidianOriginal?: string | null;
   obsidianHash?: string | null;
+  /** Eigenes Rezept: nur Ersteller (submittedBy) und Verbundene sehen es */
+  privat?: boolean;
   /** ISO-Zeitpunkt; Default jetzt */
   now?: string;
 }
@@ -176,11 +187,15 @@ export interface StoredRecipe extends Recipe {
   submittedName: string | null;
   cardImage: string | null;
   updatedAt: string;
+  privat: boolean;
+  hiddenAt: string | null;
 }
 
 export interface ListOptions {
   /** Gast, der fragt. Sieht zusätzlich seine eigenen `eingereicht`-Rezepte. */
   viewerGuestId?: string | null;
+  /** Gäste, deren eigene (private) Rezepte der Betrachter sehen darf: er selbst + Verbundene. */
+  viewerGuestIds?: string[] | null;
   /** Admin: bestimmte Status statt der Gast-Sicht. „alle“ = alles. */
   status?: RecipeStatus | RecipeStatus[] | "alle";
 }
@@ -270,7 +285,14 @@ export function migrateRecipeSchema(db: Database.Database): number {
   if (current >= RECIPE_SCHEMA_VERSION) return current;
   const step = db.transaction(() => {
     if (current < 1) db.exec(SCHEMA_V1);
-    // if (current < 2) db.exec(`ALTER TABLE recipes ADD COLUMN …`);
+    if (current < 2) {
+      // Eigene Rezepte der Nutzer (07.11.2026)
+      db.exec(`
+        ALTER TABLE recipes ADD COLUMN privat INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE recipes ADD COLUMN ausgeblendet_am TEXT;
+        CREATE INDEX IF NOT EXISTS idx_recipes_privat ON recipes(privat, eingereicht_von);
+      `);
+    }
     db.prepare(`
       INSERT INTO schema_versionen (bereich, version, geaendert_am) VALUES ('rezepte', ?, ?)
       ON CONFLICT(bereich) DO UPDATE SET version = excluded.version, geaendert_am = excluded.geaendert_am
@@ -344,6 +366,8 @@ export function rowToRecipe(row: RecipeRow, images: ImageRow[]): StoredRecipe {
     submittedName: row.eingereicht_name,
     cardImage: row.kartenbild,
     updatedAt: row.geaendert_am,
+    privat: !!row.privat,
+    hiddenAt: row.ausgeblendet_am ?? null,
   };
 }
 
@@ -397,6 +421,8 @@ export interface RecipeStore {
   /** Für die Dubletten-Prüfung: alle Namen außer abgelehnten. */
   titles(): { slug: string; name: string; status: RecipeStatus }[];
   count(status?: RecipeStatus): number;
+  /** Eigenes Rezept aus- (true) oder wieder einblenden (false). Kein Löschen. */
+  setHidden(slug: string, hidden: boolean, now?: string): StoredRecipe | null;
   close(): void;
 }
 
@@ -427,6 +453,12 @@ export function openRecipeStore(file?: string): RecipeStore {
   const visible = (row: RecipeRow, opts?: ListOptions): boolean => {
     const s = opts?.status;
     if (s === "alle") return true;
+    // Eigene Rezepte: nur der Ersteller und seine Verbundenen, ausgeblendete niemand.
+    // Gilt auch für Status-Abfragen (Export, Einreichungen), nur „alle“ (Admin) sieht sie.
+    if (row.privat) {
+      if (row.ausgeblendet_am || !row.eingereicht_von) return false;
+      return !!opts?.viewerGuestIds?.includes(row.eingereicht_von);
+    }
     if (s) return (Array.isArray(s) ? s : [s]).includes(row.status);
     if (row.status === "veroeffentlicht") return true;
     return row.status === "eingereicht" && !!opts?.viewerGuestId && row.eingereicht_von === opts.viewerGuestId;
@@ -483,14 +515,14 @@ export function openRecipeStore(file?: string): RecipeStore {
             gesamtzeit, portionen, schwierigkeit, zutaten, schritte, tipps, tags, erstellt,
             status, status_grund, quelle_url, quelle_key, plattform, herkunft,
             eingereicht_von, eingereicht_name, pruefung, bildfokus, kartenbild,
-            obsidian_datei, obsidian_original, obsidian_hash,
+            obsidian_datei, obsidian_original, obsidian_hash, privat,
             erstellt_am, geaendert_am, freigegeben_am
           ) VALUES (
             @slug, @name, @beschreibung, @kategorie, @kalorien, @protein, @kohlenhydrate, @fette,
             @gesamtzeit, @portionen, @schwierigkeit, @zutaten, @schritte, @tipps, @tags, @erstellt,
             @status, @status_grund, @quelle_url, @quelle_key, @plattform, @herkunft,
             @eingereicht_von, @eingereicht_name, @pruefung, @bildfokus, @kartenbild,
-            @obsidian_datei, @obsidian_original, @obsidian_hash,
+            @obsidian_datei, @obsidian_original, @obsidian_hash, @privat,
             @now, @now, @freigegeben_am
           )
         `).run({
@@ -524,6 +556,7 @@ export function openRecipeStore(file?: string): RecipeStore {
           obsidian_datei: input.obsidianFile ?? null,
           obsidian_original: input.obsidianOriginal ?? null,
           obsidian_hash: input.obsidianHash ?? null,
+          privat: input.privat ? 1 : 0,
           now,
           freigegeben_am: status === "veroeffentlicht" ? now : null,
         });
@@ -592,20 +625,27 @@ export function openRecipeStore(file?: string): RecipeStore {
 
     findBySourceKey(key) {
       if (!key) return [];
-      return db.prepare(`SELECT * FROM recipes WHERE quelle_key = ?`).all(key) as RecipeRow[];
+      return db.prepare(`SELECT * FROM recipes WHERE quelle_key = ? AND privat = 0`).all(key) as RecipeRow[];
     },
 
     titles() {
-      return db.prepare(`SELECT slug, name, status FROM recipes WHERE status != 'abgelehnt'`).all() as {
+      return db.prepare(`SELECT slug, name, status FROM recipes WHERE status != 'abgelehnt' AND privat = 0`).all() as {
         slug: string; name: string; status: RecipeStatus;
       }[];
     },
 
     count(status) {
       const r = status
-        ? (db.prepare(`SELECT COUNT(*) AS n FROM recipes WHERE status = ?`).get(status) as { n: number })
+        ? (db.prepare(`SELECT COUNT(*) AS n FROM recipes WHERE status = ? AND privat = 0`).get(status) as { n: number })
         : (db.prepare(`SELECT COUNT(*) AS n FROM recipes`).get() as { n: number });
       return r.n;
+    },
+
+    setHidden(slug, hidden, now = new Date().toISOString()) {
+      const row = getRow(slug);
+      if (!row) return null;
+      db.prepare(`UPDATE recipes SET ausgeblendet_am = ?, geaendert_am = ? WHERE id = ?`).run(hidden ? now : null, now, row.id);
+      return rowToRecipe(db.prepare(`SELECT * FROM recipes WHERE id = ?`).get(row.id) as RecipeRow, images(row.id));
     },
 
     close() {

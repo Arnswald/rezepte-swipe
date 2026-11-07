@@ -8,6 +8,7 @@ import {
   X, ExternalLink, AlertCircle, Check,
   Heart, Star, RotateCcw, User, Search, Copy, UserPlus, Sparkles, LogOut,
   CookingPot, UtensilsCrossed, ChefHat, Lightbulb, Soup, ImagePlus, Mic, Square, Pencil, BookOpen,
+  Plus, Minus, Camera, EyeOff, ClipboardPaste,
 } from "lucide-react";
 
 // Instagram-Glyph (aus lucide entfernt) als inline-SVG
@@ -58,6 +59,8 @@ interface Recipe {
   tags: string[];
   /** true = aus der schlanken Liste (ohne Zubereitung/Tipps), volles Rezept lädt im Detail nach */
   lite?: boolean;
+  /** Eigenes Rezept (07.11.2026, /api/eigene): mine = selbst angelegt, sonst von einer verbundenen Person */
+  own?: { mine: boolean; ownerName: string | null; updatedAt: string };
 }
 
 // Swipe-Verdikt (Tinder-Logik) — lokal persistiert bis der öffentliche Login kommt
@@ -957,9 +960,12 @@ function fmtPortions(p: string | null): string | null {
 
 function RecipeDetail({
   r, onClose, rating = 0, onRate, dislikeHitList = [],
-  friends = [], cookEntries = [], onAddCook, onDeleteCook,
+  friends = [], cookEntries = [], onAddCook, onDeleteCook, onEdit, onHide,
 }: {
   r: Recipe; onClose: () => void;
+  /** Nur bei eigenen Rezepten (r.own.mine): Formular öffnen bzw. ausblenden */
+  onEdit?: () => void;
+  onHide?: () => void;
   rating?: number; onRate?: (n: number | null) => void;
   dislikeHitList?: string[];
   friends?: Friend[];
@@ -1078,6 +1084,13 @@ function RecipeDetail({
             <X className="w-5 h-5" />
           </button>
         </div>
+        {r.own && !r.own.mine && r.own.ownerName && (
+          <p className="px-4 mt-1">
+            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-accent/10 text-accent text-[12px] font-semibold whitespace-nowrap">
+              <User className="w-3 h-3" /> {r.own.ownerName}
+            </span>
+          </p>
+        )}
         {r.description && (
           <button
             onClick={() => setDescOpen((o) => !o)}
@@ -1272,6 +1285,27 @@ function RecipeDetail({
                   )}
                 </div>
               </Collapsible>
+            </div>
+          )}
+
+          {/* Eigenes Rezept: bearbeiten, ausblenden (Löschen gibt es nicht) */}
+          {r.own?.mine && (onEdit || onHide) && (
+            <div className="grid grid-cols-2 gap-2">
+              {onEdit && (
+                <button onClick={onEdit}
+                  className="min-h-12 rounded-xl bg-surface-elevated border border-border text-[15px] font-semibold text-text-primary flex items-center justify-center gap-2 active:scale-[0.98] transition-transform whitespace-nowrap">
+                  <Pencil className="w-4 h-4" /> Bearbeiten
+                </button>
+              )}
+              {onHide && (
+                <button
+                  onClick={async () => {
+                    if (await ask({ title: "Rezept ausblenden?", text: r.name, confirmLabel: "Ausblenden" })) onHide();
+                  }}
+                  className="min-h-12 rounded-xl border border-border text-[15px] font-semibold text-text-muted flex items-center justify-center gap-2 active:scale-[0.98] transition-transform whitespace-nowrap">
+                  <EyeOff className="w-4 h-4" /> Ausblenden
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -1639,6 +1673,416 @@ function SuggestSheet({ onClose, defaultName, guestId, onSubmitted }: { onClose:
             </motion.div>
           </motion.div>
         )}
+      </motion.div>
+    </div>
+  );
+}
+
+// ── Eigenes Rezept anlegen / bearbeiten (07.11.2026) ──────────────────────────
+// Direkt in der Datenbank (/api/eigene), privat: sieht nur man selbst und wer „zu zweit“
+// verbunden ist. Kein n8n, keine Freigabe. Felder als Listen statt Freitext, damit nichts
+// umbricht und jede Zeile ein großes Tippziel ist. „Aus Link oder Text“ füllt das Formular vor.
+
+const OWN_CATS: { value: string; label: string }[] = [
+  { value: "Frühstück", label: "Frühstück" },
+  { value: "Hauptgericht", label: "Hauptgang" },
+  { value: "Snack", label: "Snacks" },
+  { value: "Dessert", label: "Dessert" },
+];
+/** Bestehende Kategorie → einer der vier Werte im Formular */
+function ownCat(cat: string | undefined): string {
+  const g = catGroup(cat ?? "Hauptgericht");
+  return g === "Hauptgang" ? "Hauptgericht" : g === "Snacks & Co" ? "Snack" : g;
+}
+
+interface OwnVorschlag {
+  name: string; description: string; category: string; totalTime: string; portions: string;
+  ingredients: string[]; steps: string[]; tips: string[]; source: string; imageUrl: string | null;
+}
+
+// Ohne Höhe: jede Stelle setzt ihre eigene (zwei h-Klassen nebeneinander gewinnt sonst die zufällige)
+const ownInput = "w-full min-w-0 px-3.5 rounded-xl bg-surface border border-border text-text-primary placeholder:text-text-faint outline-none focus:border-accent transition-colors";
+
+function OwnListEditor({
+  items, setItems, placeholder, addLabel, numbered = false, multiline = false,
+}: {
+  items: string[];
+  setItems: (next: string[]) => void;
+  placeholder: string;
+  addLabel: string;
+  numbered?: boolean;
+  multiline?: boolean;
+}) {
+  const refs = useRef<(HTMLInputElement | HTMLTextAreaElement | null)[]>([]);
+  // Nach „Enter“ oder „+“ springt der Cursor in die neue Zeile (erst nach dem Rendern da)
+  const focusNext = useRef<number | null>(null);
+  useEffect(() => {
+    if (focusNext.current == null) return;
+    refs.current[focusNext.current]?.focus();
+    focusNext.current = null;
+  }, [items]);
+  const setPendingFocus = (i: number) => { focusNext.current = i; };
+
+  const update = (i: number, v: string) => setItems(items.map((x, j) => (j === i ? v : x)));
+  const insertAfter = (i: number, values: string[]) => {
+    const next = [...items.slice(0, i + 1), ...values, ...items.slice(i + 1)];
+    setItems(next);
+    setPendingFocus(i + values.length);
+  };
+  const remove = (i: number) => {
+    const next = items.filter((_, j) => j !== i);
+    setItems(next.length ? next : [""]);
+  };
+  // Mehrere Zeilen einfügen → mehrere Einträge
+  const onPaste = (i: number) => (e: React.ClipboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    const text = e.clipboardData.getData("text");
+    if (!/\n/.test(text)) return;
+    e.preventDefault();
+    const lines = text.split(/\r?\n/).map((l) => l.replace(/^\s*([-*•]|\d+[.)])\s*/, "").trim()).filter(Boolean);
+    if (lines.length === 0) return;
+    const next = [...items];
+    next[i] = next[i].trim() ? `${next[i]} ${lines[0]}` : lines[0];
+    next.splice(i + 1, 0, ...lines.slice(1));
+    setItems(next);
+    setPendingFocus(i + lines.length - 1);
+  };
+
+  return (
+    <div className="space-y-2">
+      {items.map((v, i) => (
+        <div key={i} className="flex items-start gap-2">
+          {numbered && (
+            <span className="shrink-0 w-7 h-12 flex items-center justify-center text-[15px] font-bold text-accent tabular-nums">{i + 1}</span>
+          )}
+          {multiline ? (
+            <textarea
+              ref={(el) => { refs.current[i] = el; }}
+              value={v}
+              rows={2}
+              onChange={(e) => update(i, e.target.value)}
+              onPaste={onPaste(i)}
+              placeholder={i === 0 ? placeholder : ""}
+              className={`${ownInput} min-h-12 py-3 text-[16px] leading-snug resize-none`}
+            />
+          ) : (
+            <input
+              ref={(el) => { refs.current[i] = el; }}
+              value={v}
+              enterKeyHint="next"
+              onChange={(e) => update(i, e.target.value)}
+              onPaste={onPaste(i)}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); insertAfter(i, [""]); } }}
+              placeholder={i === 0 ? placeholder : ""}
+              className={`${ownInput} h-12 text-[16px]`}
+            />
+          )}
+          <button
+            type="button"
+            onClick={() => remove(i)}
+            aria-label="Zeile entfernen"
+            className="shrink-0 w-11 h-12 flex items-center justify-center text-text-faint active:scale-90 transition-transform"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      ))}
+      <button
+        type="button"
+        onClick={() => insertAfter(items.length - 1, [""])}
+        className="w-full min-h-11 rounded-xl border border-dashed border-border text-[15px] font-semibold text-text-secondary flex items-center justify-center gap-1.5 active:scale-[0.99] transition-transform"
+      >
+        <Plus className="w-4 h-4" /> {addLabel}
+      </button>
+    </div>
+  );
+}
+
+function OwnRecipeSheet({ initial, guestId, guestName, onClose, onSaved }: {
+  initial: Recipe | null;
+  guestId: string;
+  guestName: string;
+  onClose: () => void;
+  onSaved: (r: Recipe) => void;
+}) {
+  const toast = useToast();
+  const prefersReduced = useReducedMotion();
+  const editing = !!initial;
+  const [title, setTitle] = useState(initial?.name ?? "");
+  const [category, setCategory] = useState(ownCat(initial?.category));
+  const [totalTime, setTotalTime] = useState(initial?.totalTime ?? "");
+  const [portions, setPortions] = useState(() => Number(String(initial?.portions ?? "").match(/\d+/)?.[0] ?? 2) || 2);
+  const [ingredients, setIngredients] = useState<string[]>(() => {
+    const l = initial?.ingredients.flatMap((g) => g.items) ?? [];
+    return l.length ? l : [""];
+  });
+  const [steps, setSteps] = useState<string[]>(() => (initial?.steps.length ? initial.steps : [""]));
+  // Ohne eigenes Feld, aber erhalten (aus „Einfügen“ oder beim Bearbeiten)
+  const [description, setDescription] = useState(initial?.description ?? "");
+  const [tips, setTips] = useState<string[]>(initial?.tips ?? []);
+  const [source, setSource] = useState(initial?.source ?? "");
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasteText, setPasteText] = useState("");
+  const [parsing, setParsing] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = ""; };
+  }, []);
+  const previewRef = useRef<string | null>(null);
+  useEffect(() => { previewRef.current = imagePreview; }, [imagePreview]);
+  useEffect(() => () => { if (previewRef.current) URL.revokeObjectURL(previewRef.current); }, []);
+
+  const pickImage = (f: File | null) => {
+    setImageFile(f);
+    setImageUrl(null);
+    setImagePreview((prev) => { if (prev) URL.revokeObjectURL(prev); return f ? URL.createObjectURL(f) : null; });
+  };
+  const existingImage = !imageFile && !imageUrl && initial?.image && initial.imageExists ? initial.image : null;
+  const shownImage = imagePreview ?? imageUrl ?? (existingImage ? imageSrc(existingImage, "wide", 720, "webp", initial?.imageFocus) : null);
+
+  const applyVorschlag = (v: OwnVorschlag) => {
+    if (v.name) setTitle(v.name);
+    if (v.category) setCategory(ownCat(v.category));
+    if (v.totalTime) setTotalTime(v.totalTime);
+    const p = Number(String(v.portions).match(/\d+/)?.[0] ?? 0);
+    if (p > 0) setPortions(Math.min(p, 40));
+    if (v.ingredients.length) setIngredients(v.ingredients);
+    if (v.steps.length) setSteps(v.steps);
+    if (v.description) setDescription(v.description);
+    if (v.tips.length) setTips(v.tips);
+    if (v.source) setSource(v.source);
+    if (v.imageUrl && !imageFile) setImageUrl(v.imageUrl);
+  };
+
+  const parse = async () => {
+    const text = pasteText.trim();
+    if (!text) return;
+    setParsing(true);
+    try {
+      const res = await fetch("/api/eigene", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "parse", guestId, text }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok || !d.vorschlag) { toast.error("Hat nicht geklappt", d.error ?? "Versuch's mit dem Rezepttext."); return; }
+      const v = d.vorschlag as OwnVorschlag;
+      applyVorschlag(v);
+      setPasteOpen(false);
+      setPasteText("");
+      if (!v.ingredients.length && !v.steps.length) toast.info("Nur der Titel", "Zutaten und Schritte bitte selbst eintragen.");
+    } catch {
+      toast.error("Keine Verbindung", "Versuch's gleich nochmal.");
+    } finally {
+      setParsing(false);
+    }
+  };
+
+  const clean = (l: string[]) => l.map((s) => s.trim()).filter(Boolean);
+  const canSave = title.trim().length > 0 && (clean(ingredients).length > 0 || clean(steps).length > 0);
+
+  const save = async () => {
+    if (!title.trim()) { toast.error("Fast!", "Gib dem Rezept einen Namen."); return; }
+    if (!canSave) { toast.error("Fast!", "Zutaten oder Schritte fehlen."); return; }
+    const time = totalTime.trim();
+    const fd = new FormData();
+    fd.append("guestId", guestId);
+    fd.append("name", guestName);
+    if (initial) fd.append("slug", initial.slug);
+    fd.append("title", title.trim());
+    fd.append("description", description);
+    fd.append("category", category);
+    fd.append("totalTime", /^\d+$/.test(time) ? `${time} Min` : time);
+    fd.append("portions", String(portions));
+    fd.append("ingredients", JSON.stringify(clean(ingredients)));
+    fd.append("steps", JSON.stringify(clean(steps)));
+    fd.append("tips", JSON.stringify(clean(tips)));
+    fd.append("source", source);
+    if (imageFile) fd.append("image", imageFile);
+    else if (imageUrl) fd.append("imageUrl", imageUrl);
+    setSaving(true);
+    try {
+      const res = await fetch("/api/eigene", { method: "POST", body: fd });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok || !d.rezept) { toast.error("Hat nicht geklappt", d.error ?? "Versuch's gleich nochmal."); return; }
+      haptic("success");
+      toast.success(editing ? "Gespeichert" : "Rezept angelegt");
+      onSaved(d.rezept as Recipe);
+      onClose();
+    } catch {
+      toast.error("Keine Verbindung", "Versuch's gleich nochmal.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+      <motion.div
+        initial={{ opacity: prefersReduced ? 1 : 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        className="absolute inset-0 bg-black/60" onClick={onClose}
+      />
+      <motion.div
+        initial={{ y: prefersReduced ? 0 : "100%" }} animate={{ y: 0 }} exit={{ y: prefersReduced ? 0 : "100%" }}
+        transition={prefersReduced ? { duration: 0 } : { type: "spring", damping: 34, stiffness: 300 }}
+        className="relative w-full sm:max-w-lg h-[calc(100dvh-env(safe-area-inset-top)-10px)] sm:h-auto sm:max-h-[92dvh] flex flex-col bg-bg sm:rounded-[22px] rounded-t-[22px] border border-border overflow-hidden"
+      >
+        {/* Kopf */}
+        <div className="shrink-0 flex items-center gap-2 px-4 pt-3 pb-2 bg-bg">
+          <h2 className="flex-1 min-w-0 text-[22px] font-extrabold tracking-tight text-text-primary truncate">
+            {editing ? "Rezept bearbeiten" : "Eigenes Rezept"}
+          </h2>
+          <button onClick={onClose} aria-label="Schließen"
+            className="shrink-0 w-11 h-11 rounded-full bg-surface-elevated text-text-secondary flex items-center justify-center active:scale-95 transition-transform">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain px-4 pb-4 space-y-5">
+          {/* Aus Link oder Text */}
+          {pasteOpen ? (
+            <div className="rounded-[22px] bg-surface border border-border p-2.5 space-y-2.5">
+              <textarea
+                value={pasteText}
+                onChange={(e) => setPasteText(e.target.value)}
+                rows={5}
+                autoFocus
+                placeholder="Link oder Rezepttext"
+                className="w-full px-3.5 py-3 rounded-xl bg-surface-elevated text-[16px] text-text-primary placeholder:text-text-faint outline-none resize-none leading-snug"
+              />
+              <div className="grid grid-cols-2 gap-2">
+                <button onClick={() => { setPasteOpen(false); setPasteText(""); }}
+                  className="min-h-12 rounded-xl bg-surface-elevated text-[15px] font-semibold text-text-secondary active:scale-[0.98] transition-transform">
+                  Abbrechen
+                </button>
+                <button onClick={parse} disabled={parsing || !pasteText.trim()}
+                  className="min-h-12 rounded-xl bg-accent text-white text-[15px] font-semibold flex items-center justify-center gap-2 active:scale-[0.98] transition-transform disabled:opacity-50">
+                  {parsing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} Übernehmen
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button onClick={() => setPasteOpen(true)}
+              className="w-full min-h-12 rounded-xl bg-surface border border-border text-[15px] font-semibold text-text-primary flex items-center justify-center gap-2 active:scale-[0.99] transition-transform whitespace-nowrap">
+              <ClipboardPaste className="w-4 h-4 text-accent" /> Aus Link oder Text einfügen
+            </button>
+          )}
+
+          {/* Foto: Kamera oder Galerie */}
+          <div className="relative aspect-[4/3] w-full rounded-[22px] overflow-hidden bg-surface border border-border">
+            {shownImage ? (
+              <>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={shownImage} alt="" className="absolute inset-0 w-full h-full object-cover" />
+                {/* Kreis 32 px mit 6 px Abstand zur Ecke → Ecke 16 + 6 = 22 px */}
+                {!existingImage && (
+                  <button onClick={() => pickImage(null)} aria-label="Foto entfernen"
+                    className="absolute top-0 right-0 w-11 h-11 flex items-center justify-center active:scale-90 transition-transform">
+                    <span className="w-8 h-8 rounded-full bg-black/55 text-white flex items-center justify-center"><X className="w-4 h-4" /></span>
+                  </button>
+                )}
+                <label className="absolute bottom-2 right-2 min-h-11 px-4 rounded-[14px] bg-black/55 text-white text-[15px] font-semibold flex items-center gap-2 cursor-pointer active:scale-95 transition-transform whitespace-nowrap">
+                  <ImagePlus className="w-4 h-4" /> Ändern
+                  <input type="file" accept="image/*" className="hidden" onChange={(e) => pickImage(e.target.files?.[0] ?? null)} />
+                </label>
+              </>
+            ) : (
+              <div className="absolute inset-0 p-2 grid grid-cols-2 gap-2">
+                <label className="rounded-[14px] bg-surface-elevated flex flex-col items-center justify-center gap-2 text-text-secondary text-[15px] font-semibold cursor-pointer active:scale-[0.98] transition-transform">
+                  <Camera className="w-7 h-7 text-accent" /> Kamera
+                  <input type="file" accept="image/*" capture="environment" className="hidden" onChange={(e) => pickImage(e.target.files?.[0] ?? null)} />
+                </label>
+                <label className="rounded-[14px] bg-surface-elevated flex flex-col items-center justify-center gap-2 text-text-secondary text-[15px] font-semibold cursor-pointer active:scale-[0.98] transition-transform">
+                  <ImagePlus className="w-7 h-7 text-accent" /> Galerie
+                  <input type="file" accept="image/*" className="hidden" onChange={(e) => pickImage(e.target.files?.[0] ?? null)} />
+                </label>
+              </div>
+            )}
+          </div>
+
+          {/* Titel */}
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Name des Gerichts"
+            enterKeyHint="next"
+            maxLength={120}
+            className={`${ownInput} h-14 text-[18px] font-semibold`}
+          />
+
+          {/* Kategorie */}
+          <div role="radiogroup" aria-label="Kategorie" className="grid grid-cols-4 gap-1 p-1 rounded-2xl bg-surface border border-border">
+            {OWN_CATS.map((c) => (
+              <button
+                key={c.value}
+                role="radio"
+                aria-checked={category === c.value}
+                onClick={() => setCategory(c.value)}
+                className={`min-h-11 rounded-xl text-[14px] font-semibold whitespace-nowrap transition-colors ${category === c.value ? "bg-accent text-white" : "text-text-secondary"}`}
+              >
+                {c.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Dauer + Portionen */}
+          <div className="grid grid-cols-2 gap-2">
+            <label className="relative block">
+              <Clock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted pointer-events-none" />
+              <input
+                value={totalTime}
+                onChange={(e) => setTotalTime(e.target.value)}
+                placeholder="30 Min"
+                aria-label="Dauer"
+                maxLength={40}
+                className={`${ownInput} h-[54px] pl-10 text-[16px]`}
+              />
+            </label>
+            {/* 54 px hoch, damit die Knöpfe innen 44 px haben (Rand 1 + Polster 4 je Seite; Ecke außen 12 = innen 8 + 4) */}
+            <div className="h-[54px] flex items-center rounded-xl bg-surface border border-border p-1" aria-label="Portionen">
+              <button onClick={() => setPortions((p) => Math.max(1, p - 1))} aria-label="Weniger Portionen"
+                className="w-11 h-full rounded-lg flex items-center justify-center text-text-secondary active:bg-surface-elevated transition-colors">
+                <Minus className="w-4 h-4" />
+              </button>
+              <span className="flex-1 flex items-center justify-center gap-1.5 text-[16px] font-semibold text-text-primary tabular-nums whitespace-nowrap">
+                <Users className="w-4 h-4 text-text-muted" />{portions}
+              </span>
+              <button onClick={() => setPortions((p) => Math.min(40, p + 1))} aria-label="Mehr Portionen"
+                className="w-11 h-full rounded-lg flex items-center justify-center text-text-secondary active:bg-surface-elevated transition-colors">
+                <Plus className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+
+          {/* Zutaten */}
+          <div>
+            <h3 className="text-[15px] font-bold text-text-primary mb-2">Zutaten</h3>
+            <OwnListEditor items={ingredients} setItems={setIngredients} placeholder="200 g Mehl" addLabel="Zutat" />
+          </div>
+
+          {/* Schritte */}
+          <div>
+            <h3 className="text-[15px] font-bold text-text-primary mb-2">Zubereitung</h3>
+            <OwnListEditor items={steps} setItems={setSteps} placeholder="Ofen auf 180 °C vorheizen" addLabel="Schritt"
+              numbered multiline />
+          </div>
+        </div>
+
+        {/* Speichern */}
+        <div className="shrink-0 px-4 pt-2 pb-[calc(0.75rem+env(safe-area-inset-bottom))] bg-bg border-t border-border">
+          <button
+            onClick={save}
+            disabled={saving || !canSave}
+            className="w-full min-h-[52px] rounded-xl bg-accent text-white text-[16px] font-semibold flex items-center justify-center gap-2 active:scale-[0.98] transition-transform disabled:opacity-50"
+          >
+            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+            {editing ? "Speichern" : "Rezept anlegen"}
+          </button>
+        </div>
       </motion.div>
     </div>
   );
@@ -2301,8 +2745,10 @@ function FriendsView({
 
 function AccountView({
   guestId, guestName, recipes, verdicts, ratings, dislikes, cookEvents, onOpen, onSuggest, onLogout, onSaveDislikes, onConnections,
-  todayPicks, yesterdayPicks, yesterdayVisible, likeCounts, onGoSwipe, submitTick, onRemoveToday,
+  todayPicks, yesterdayPicks, yesterdayVisible, likeCounts, onGoSwipe, submitTick, onRemoveToday, ownRecipes, onNewOwn,
 }: {
+  ownRecipes: Recipe[];
+  onNewOwn: () => void;
   submitTick: number;
   onRemoveToday: (slug: string) => void;
   todayPicks: DayPick[];
@@ -2332,6 +2778,7 @@ function AccountView({
   const [connecting, setConnecting] = useState(false);
   const [matchesOpen, setMatchesOpen] = useState(false);
   const [cookedOpen, setCookedOpen] = useState(false);
+  const [ownOpen, setOwnOpen] = useState(false);
 
   const bySlug = useMemo(() => {
     const m = new Map<string, Recipe>();
@@ -2653,6 +3100,46 @@ function AccountView({
         )}
       </div>
 
+      {/* Eigene Rezepte (07.11.2026): erste Kachel legt ein neues an, danach meine und die der
+          Verbundenen (mit Namen). Steht vor „Schon gekocht“ (gleiche order, frühere Stelle im DOM). */}
+      <div className="order-6">
+        <h3 className="text-[15px] font-bold text-text-primary flex items-center gap-1.5 mb-2">
+          <ChefHat className="w-4 h-4 text-accent" /> Eigene Rezepte
+          {ownRecipes.length > 0 && <span className="text-[13px] font-normal text-text-muted tabular-nums">({ownRecipes.length})</span>}
+        </h3>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+          <button
+            onClick={onNewOwn}
+            className="rounded-xl aspect-[4/3] border-[1.5px] border-dashed border-accent/40 bg-accent/5 text-accent flex flex-col items-center justify-center gap-1.5 active:scale-[0.98] transition-transform"
+          >
+            <span className="w-11 h-11 rounded-full bg-accent text-white flex items-center justify-center"><Plus className="w-5 h-5" /></span>
+            <span className="text-[14px] font-semibold whitespace-nowrap">Eigenes Rezept</span>
+          </button>
+          {(ownOpen ? ownRecipes : ownRecipes.slice(0, 5)).map((r) => (
+            <button
+              key={r.slug}
+              onClick={() => onOpen(r)}
+              className="relative rounded-xl overflow-hidden aspect-[4/3] bg-surface-elevated text-left active:scale-[0.98] transition-transform"
+            >
+              <RecipeImage r={r} shape="wide" sizes="(min-width: 640px) 33vw, 50vw" className="absolute inset-0 w-full h-full object-cover" />
+              <div className="absolute inset-x-0 bottom-0 h-3/5 bg-gradient-to-t from-black/85 to-transparent" />
+              {r.own && !r.own.mine && r.own.ownerName && (
+                <span className="absolute top-1.5 left-1.5 max-w-[85%] px-2 py-0.5 rounded-full bg-black/55 text-white text-[12px] font-semibold truncate">
+                  {r.own.ownerName}
+                </span>
+              )}
+              <p className="absolute inset-x-0 bottom-0 p-2 text-white text-[13px] font-semibold leading-tight line-clamp-2 drop-shadow">{r.name}</p>
+            </button>
+          ))}
+        </div>
+        {ownRecipes.length > 5 && (
+          <button onClick={() => setOwnOpen((o) => !o)}
+            className="mt-2.5 w-full min-h-11 rounded-xl bg-surface-elevated border border-border text-text-secondary text-[13px] font-semibold active:scale-[0.98] transition-transform">
+            {ownOpen ? "Weniger anzeigen" : `Alle ${ownRecipes.length} anzeigen`}
+          </button>
+        )}
+      </div>
+
       {/* Schon gekocht (Sterne + Koch-Verlauf) */}
       <div className="order-6">
         <h3 className="text-[15px] font-bold text-text-primary flex items-center gap-1.5 mb-2">
@@ -2774,7 +3261,15 @@ export default function RezeptePage() {
   // Liste schon mit dem HTML anfordern (<link rel="preload">), parallel zum JavaScript.
   // Vorher startete die Anfrage erst nach dem Hydrieren — eine volle Runde später.
   preload(RECIPES_LITE_URL, { as: "fetch", crossOrigin: "anonymous" });
-  const [recipes, setRecipes] = useState<Recipe[]>([]);
+  const [baseRecipes, setRecipes] = useState<Recipe[]>([]);
+  // Eigene Rezepte (meine + die meiner Verbundenen), kommen getrennt von /api/eigene
+  const [ownRecipes, setOwnRecipes] = useState<Recipe[]>([]);
+  const [ownSheet, setOwnSheet] = useState<{ recipe: Recipe | null } | null>(null);
+  const recipes = useMemo(() => {
+    if (ownRecipes.length === 0) return baseRecipes;
+    const own = new Set(ownRecipes.map((r) => r.slug));
+    return [...ownRecipes, ...baseRecipes.filter((r) => !own.has(r.slug))];
+  }, [baseRecipes, ownRecipes]);
   const [categories, setCategories] = useState<string[]>([]);
   const [diag, setDiag] = useState<Diagnostics | null>(null);
   const [loading, setLoading] = useState(true);
@@ -2911,6 +3406,53 @@ export default function RezeptePage() {
     // dayInfo.today: beim Tageswechsel (App offen) den Stand neu holen
   }, [hydrated, guestId, guestName, orderDeck, dayInfo.today]);
 
+  // Eigene Rezepte laden: beim Öffnen und wenn sich die Verbindungen ändern („Zu zweit“).
+  // Nur übernehmen, wenn sich etwas geändert hat, sonst baut der Stapel unnötig neu auf.
+  const friendKey = useMemo(() => friends.map((f) => f.guestId).sort().join(","), [friends]);
+  const loadOwn = useCallback(() => {
+    if (!guestId) return;
+    fetch("/api/eigene", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "list", guestId }),
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d || !Array.isArray(d.eigene)) return;
+        const next = d.eigene as Recipe[];
+        const sig = (l: Recipe[]) => l.map((r) => `${r.slug}@${r.own?.updatedAt ?? ""}`).join("|");
+        setOwnRecipes((prev) => (sig(prev) === sig(next) ? prev : next));
+      })
+      .catch(() => { /* offline egal */ });
+  }, [guestId]);
+  useEffect(() => {
+    if (!hydrated) return;
+    loadOwn();
+  }, [hydrated, loadOwn, friendKey]);
+
+  // Gespeichert (neu oder bearbeitet): sofort in der Liste und im offenen Detail
+  const ownSaved = useCallback((r: Recipe) => {
+    setOwnRecipes((prev) => [r, ...prev.filter((x) => x.slug !== r.slug)]);
+    setFullRecipes((prev) => { const n = { ...prev }; delete n[r.slug]; return n; });
+    setDetail((d) => (d && d.slug === r.slug ? r : d));
+  }, []);
+
+  const hideOwn = useCallback((r: Recipe) => {
+    fetch("/api/eigene", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "hide", guestId, slug: r.slug }),
+    })
+      .then((res) => res.json().then((d) => ({ ok: res.ok, d })))
+      .then(({ ok, d }) => {
+        if (!ok) { toast.error("Hat nicht geklappt", d.error ?? "Versuch's gleich nochmal."); return; }
+        setOwnRecipes((prev) => prev.filter((x) => x.slug !== r.slug));
+        setDetail(null);
+        toast.success("Ausgeblendet");
+      })
+      .catch(() => toast.error("Keine Verbindung", "Versuch's gleich nochmal."));
+  }, [guestId, toast]);
+
   // Tageswechsel um 4:00 bei offener App: beim Zurückkommen und jede Minute prüfen.
   useEffect(() => {
     if (!hydrated) return;
@@ -2957,7 +3499,7 @@ export default function RezeptePage() {
     try { localStorage.removeItem(NAME_KEY); localStorage.removeItem(ID_KEY); localStorage.removeItem(FAV_KEY); localStorage.removeItem(RATE_KEY); localStorage.removeItem(DISLIKE_KEY); localStorage.removeItem(DAYS_KEY); } catch { /* ignore */ }
     dayStoreRef.current = EMPTY_DAYS; setDayStore(EMPTY_DAYS);
     startedRef.current = false; touchedRef.current.clear(); savedDeckPos.current = null; setDeckList([]);
-    setEveningGroup(null); setDetail(null); setMatch(null);
+    setEveningGroup(null); setDetail(null); setMatch(null); setOwnRecipes([]); setOwnSheet(null);
     setGuestName(null); setGuestId(""); setVerdicts({}); setRatings({}); setDislikes([]); setCookEvents([]); setFriends([]); setHistory([]); setIndex(0); setMode("swipe");
   }, []);
 
@@ -3185,15 +3727,17 @@ export default function RezeptePage() {
 
   // Volles Rezept (Zubereitung + Tipps) fürs Detail nachladen, einmal pro Gericht.
   const detailSlug = detail?.slug ?? null;
+  // Eigene Rezepte kommen schon vollständig (und sind über /api/recipes nicht öffentlich abrufbar)
+  const detailOwn = !!detail?.own;
   useEffect(() => {
-    if (!detailSlug || fullRecipes[detailSlug]) return;
+    if (!detailSlug || detailOwn || fullRecipes[detailSlug]) return;
     let cancelled = false;
     fetch(`/api/recipes?slug=${encodeURIComponent(detailSlug)}`)
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => { if (!cancelled && d?.recipe) setFullRecipes((prev) => ({ ...prev, [detailSlug]: d.recipe })); })
       .catch(() => { /* offline: Detail zeigt dann eben nur Zutaten */ });
     return () => { cancelled = true; };
-  }, [detailSlug, fullRecipes]);
+  }, [detailSlug, detailOwn, fullRecipes]);
   const detailRecipe = detail ? (fullRecipes[detail.slug] ?? detail) : null;
 
   // Raster-Liste: Kategorie-Filter + Suche + Sortierung nach Beliebtheit.
@@ -3461,6 +4005,8 @@ export default function RezeptePage() {
             cookEvents={cookEvents}
             onOpen={setDetail}
             onSuggest={() => setSuggestOpen(true)}
+            ownRecipes={ownRecipes}
+            onNewOwn={() => setOwnSheet({ recipe: null })}
             onLogout={logout}
             onSaveDislikes={saveDislikes}
             onConnections={setFriends}
@@ -3631,6 +4177,22 @@ export default function RezeptePage() {
             cookEntries={cookEvents.filter((e) => e.slug === detail.slug)}
             onAddCook={(partnerGuest, cookedOn) => addCook(detail, partnerGuest, cookedOn)}
             onDeleteCook={deleteCook}
+            onEdit={detail.own?.mine ? () => setOwnSheet({ recipe: detailRecipe }) : undefined}
+            onHide={detail.own?.mine ? () => hideOwn(detail) : undefined}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Eigenes Rezept anlegen / bearbeiten (liegt über dem Detail) */}
+      <AnimatePresence>
+        {ownSheet && guestId && (
+          <OwnRecipeSheet
+            key={ownSheet.recipe?.slug ?? "neu"}
+            initial={ownSheet.recipe}
+            guestId={guestId}
+            guestName={guestName ?? ""}
+            onClose={() => setOwnSheet(null)}
+            onSaved={ownSaved}
           />
         )}
       </AnimatePresence>
