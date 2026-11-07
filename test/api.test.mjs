@@ -25,12 +25,19 @@ const post = (url, body, headers = {}) =>
 const del = (url, body, headers = {}) =>
   new Request(`http://t${url}`, { method: "DELETE", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
 const cookieOf = (res) => (res.headers.get("set-cookie") ?? "").split(";")[0];
+// Das Token kommt nur noch als Cookie (nicht mehr im JSON); die Tests lesen es von dort.
+const tokenOf = (res) => decodeURIComponent(cookieOf(res).replace(/^rezepte-session=/, ""));
+const registerUser = async (username, password) => {
+  const res = await r.register.POST(post("/api/auth/register", { username, password }));
+  return { ...(await res.json()), token: tokenOf(res) };
+};
 
 test("Registrieren gibt Token + httpOnly-Cookie, Hash statt Klartext in der DB", async () => {
   const res = await r.register.POST(post("/api/auth/register", { username: "Anna", password: "geheim1" }));
   assert.equal(res.status, 200);
-  const d = await res.json();
-  assert.ok(d.guestId && d.token && d.token.length >= 40);
+  const d = { ...(await res.json()), token: tokenOf(res) };
+  assert.ok(d.guestId && d.token.length >= 40);
+  assert.equal((await registerUser("Anna2", "geheim1")).token.length >= 40, true);
   const sc = res.headers.get("set-cookie") ?? "";
   assert.match(sc, /rezepte-session=/);
   assert.match(sc, /HttpOnly/i);
@@ -40,8 +47,8 @@ test("Registrieren gibt Token + httpOnly-Cookie, Hash statt Klartext in der DB",
 });
 
 test("Token gewinnt vor fremder guestId im Body", async () => {
-  const a = await (await r.register.POST(post("/api/auth/register", { username: "Bernd", password: "geheim2" }))).json();
-  const c = await (await r.register.POST(post("/api/auth/register", { username: "Clara", password: "geheim3" }))).json();
+  const a = await registerUser("Bernd", "geheim2");
+  const c = await registerUser("Clara", "geheim3");
   const res = await r.verdict.POST(post("/api/verdict", { guestId: c.guestId, name: "Bernd", slug: "pasta", verdict: "like" }, { authorization: `Bearer ${a.token}` }));
   assert.equal(res.status, 200);
   assert.deepEqual(db.getVerdictsForGuest(a.guestId), { pasta: "like" });
@@ -54,7 +61,8 @@ test("Sanfte Migration: alte guestId ohne Token bekommt über /api/me ein Token,
   assert.equal(v.status, 200);
   const me = await r.me.POST(post("/api/me", { guestId: gid, name: "Alt" }));
   const d = await me.json();
-  assert.ok(d.token);
+  assert.equal(d.token, undefined);
+  assert.ok(tokenOf(me).length >= 40);
   assert.equal(d.verdicts.suppe, "super");
   assert.match(cookieOf(me), /^rezepte-session=/);
   // zweiter Besuch mit Token: kein neues Token
@@ -63,7 +71,7 @@ test("Sanfte Migration: alte guestId ohne Token bekommt über /api/me ein Token,
 });
 
 test("Konto löschen: Passwort Pflicht, danach ist alles weg, Token ungültig", async () => {
-  const u = await (await r.register.POST(post("/api/auth/register", { username: "Dora", password: "geheim4" }))).json();
+  const u = await registerUser("Dora", "geheim4");
   await r.verdict.POST(post("/api/verdict", { guestId: u.guestId, name: "Dora", slug: "kuchen", verdict: "like" }, { authorization: `Bearer ${u.token}` }));
   assert.equal(db.getAllVerdicts().filter((x) => x.guest_id === u.guestId).length, 1);
 
@@ -84,8 +92,8 @@ test("Konto löschen: Passwort Pflicht, danach ist alles weg, Token ungültig", 
 });
 
 test("Konto löschen: Partner-Koch-Einträge anderer bleiben, leere Gruppen verschwinden", async () => {
-  const a = await (await r.register.POST(post("/api/auth/register", { username: "Emil", password: "geheim5" }))).json();
-  const b = await (await r.register.POST(post("/api/auth/register", { username: "Fia", password: "geheim6" }))).json();
+  const a = await registerUser("Emil", "geheim5");
+  const b = await registerUser("Fia", "geheim6");
   db.addCookEvent({ slug: "pizza", recipeName: "Pizza", category: "Hauptgericht", authorGuest: a.guestId, partnerGuest: b.guestId, cookedOn: "2026-11-01", now: new Date().toISOString() });
   const g = db.createGroup(b.guestId, "Nur Fia", new Date().toISOString());
   db.addGroupMember(g.group_id, b.guestId, new Date().toISOString());
@@ -97,7 +105,7 @@ test("Konto löschen: Partner-Koch-Einträge anderer bleiben, leere Gruppen vers
 });
 
 test("Abmelden beendet die Sitzung", async () => {
-  const u = await (await r.register.POST(post("/api/auth/register", { username: "Gustav", password: "geheim7" }))).json();
+  const u = await registerUser("Gustav", "geheim7");
   const res = await r.session.DELETE(del("/api/session", {}, { authorization: `Bearer ${u.token}` }));
   assert.equal(res.status, 200);
   assert.equal(db.guestForToken(u.token), null);

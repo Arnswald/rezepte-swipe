@@ -8,7 +8,7 @@
  * einzige „Zugangskennung" des Gasts ist — nicht in Logs/Query-Strings landen lassen.
  */
 
-import { resolveGuestId } from "@/lib/session";
+import { resolveGuestId, denyForeignGuest } from "@/lib/session";
 import { NextResponse } from "next/server";
 import { ensureGuest } from "@/lib/db";
 
@@ -18,6 +18,8 @@ export async function POST(req: Request) {
   try {
     const b = (await req.json().catch(() => ({}))) as { guestId?: string; name?: string };
     const guestId = resolveGuestId(req, b.guestId);
+    const denied = denyForeignGuest(req, b.guestId);
+    if (denied) return denied;
     const name = (b.name ?? "").trim().slice(0, 80);
     if (!guestId || !name) {
       return NextResponse.json({ error: "guestId und name sind Pflicht" }, { status: 400 });

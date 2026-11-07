@@ -5,7 +5,7 @@
  * Body: { guestId, name?, dislikes: string[] }  → { ok, dislikes }
  */
 
-import { resolveGuestId } from "@/lib/session";
+import { resolveGuestId, denyForeignGuest } from "@/lib/session";
 import { NextResponse } from "next/server";
 import { ensureGuest, setDislikes, getDislikes } from "@/lib/db";
 
@@ -17,6 +17,8 @@ export async function POST(req: Request) {
       guestId?: string; name?: string; dislikes?: unknown;
     };
     const guestId = resolveGuestId(req, b.guestId);
+    const denied = denyForeignGuest(req, b.guestId);
+    if (denied) return denied;
     const name = (b.name ?? "").trim().slice(0, 80);
     if (!guestId) return NextResponse.json({ error: "guestId fehlt" }, { status: 400 });
 

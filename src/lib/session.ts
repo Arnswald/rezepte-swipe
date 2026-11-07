@@ -11,7 +11,7 @@
  */
 
 import { NextResponse } from "next/server";
-import { createSession, guestForToken } from "@/lib/db";
+import { createSession, guestForToken, guestHasSession, hasAccount } from "@/lib/db";
 
 export const SESSION_COOKIE = "rezepte-session";
 const MAX_AGE = 365 * 86400;
@@ -27,7 +27,9 @@ export function tokenFromRequest(req: Request): string {
   const cookie = req.headers.get("cookie") ?? "";
   for (const part of cookie.split(";")) {
     const [k, ...v] = part.trim().split("=");
-    if (k === SESSION_COOKIE) return decodeURIComponent(v.join("="));
+    if (k === SESSION_COOKIE) {
+      try { return decodeURIComponent(v.join("=")); } catch { return ""; }
+    }
   }
   return "";
 }
@@ -46,7 +48,21 @@ export function resolveGuestId(req: Request, bodyGuestId: string | null | undefi
   const fromToken = sessionGuest(req);
   if (fromToken) return fromToken;
   if (sessionEnforced()) return "";
-  return (bodyGuestId ?? "").trim().slice(0, 64);
+  const g = (bodyGuestId ?? "").trim().slice(0, 64);
+  // Wer schon eine Sitzung oder ein Konto hat, darf sich nur noch mit Token ausweisen:
+  // sonst genügt das Wissen der guestId, um fremde Daten zu schreiben.
+  if (g && (guestHasSession(g) || hasAccount(g))) return "";
+  return g;
+}
+
+/** Stille Migration: nur Gäste ohne Konto und ohne Sitzung bekommen ein Token (Herkunft 'migration'). */
+export function migrationAllowed(guestId: string): boolean {
+  return !hasAccount(guestId) && !guestHasSession(guestId);
+}
+
+/** Neue Sitzung aus der Migration alter Geräte. */
+export function createMigrationSession(guestId: string): string {
+  return createSession(guestId, new Date(), "migration").token;
 }
 
 /** Setzt das Sitzungs-Cookie an einer Antwort. */
@@ -66,8 +82,18 @@ export function clearSession(res: NextResponse): NextResponse {
   return res;
 }
 
-/** Neue Sitzung ausstellen und ans Ergebnis hängen. `token` steht zusätzlich im Body (für Bearer-Betrieb). */
+/** Neue Sitzung ausstellen und ans Ergebnis hängen. das Token geht nur per httpOnly-Cookie raus. */
 export function issueSession(res: NextResponse, guestId: string): { res: NextResponse; token: string } {
   const { token } = createSession(guestId);
   return { res: attachSession(res, token), token };
+}
+
+/**
+ * Für Schreibrouten: 401, wenn eine Body-guestId abgelehnt wurde (Gast hat Sitzung/Konto, Anfrage ohne passendes Token).
+ * Gibt null zurück, wenn alles in Ordnung ist oder gar keine guestId mitkam.
+ */
+export function denyForeignGuest(req: Request, bodyGuestId: string | null | undefined): NextResponse | null {
+  if (!(bodyGuestId ?? "").trim()) return null;
+  if (resolveGuestId(req, bodyGuestId)) return null;
+  return NextResponse.json({ error: "Nicht angemeldet." }, { status: 401 });
 }

@@ -7,7 +7,7 @@
  * Antwort: { ok, cooked }  — der komplette Koch-Verlauf des Gasts (neu geladen).
  */
 
-import { resolveGuestId } from "@/lib/session";
+import { resolveGuestId, denyForeignGuest } from "@/lib/session";
 import { NextResponse } from "next/server";
 import { ensureGuest, addCookEvent, deleteCookEvent, getCookEventsForGuest } from "@/lib/db";
 
@@ -23,6 +23,8 @@ export async function POST(req: Request) {
       partnerGuest?: string | null; cookedOn?: string; id?: number;
     };
     const guestId = resolveGuestId(req, b.guestId);
+    const denied = denyForeignGuest(req, b.guestId);
+    if (denied) return denied;
     const name = (b.name ?? "").trim().slice(0, 80);
     if (!guestId) return NextResponse.json({ error: "guestId fehlt" }, { status: 400 });
     ensureGuest(guestId, name || "Gast", new Date().toISOString());

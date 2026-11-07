@@ -8,7 +8,7 @@
  * POST (nicht GET), damit der guestId nicht in der URL/Logs landet.
  */
 
-import { resolveGuestId } from "@/lib/session";
+import { resolveGuestId, denyForeignGuest } from "@/lib/session";
 import { NextResponse } from "next/server";
 import { ensureGuest, getConnections, getMatches } from "@/lib/db";
 
@@ -18,6 +18,8 @@ export async function POST(req: Request) {
   try {
     const b = (await req.json().catch(() => ({}))) as { guestId?: string; name?: string };
     const guestId = resolveGuestId(req, b.guestId);
+    const denied = denyForeignGuest(req, b.guestId);
+    if (denied) return denied;
     const name = (b.name ?? "").trim().slice(0, 80);
     if (!guestId) {
       return NextResponse.json({ error: "guestId ist Pflicht" }, { status: 400 });

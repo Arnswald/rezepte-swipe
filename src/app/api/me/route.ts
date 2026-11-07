@@ -10,9 +10,9 @@
  */
 
 import { NextResponse } from "next/server";
-import { attachSession, clearSession, resolveGuestId, sessionGuest } from "@/lib/session";
+import { attachSession, clearSession, resolveGuestId, sessionGuest, migrationAllowed, createMigrationSession } from "@/lib/session";
 import { blocked, fail, succeed, LIMITS } from "@/lib/guard";
-import { ensureGuest, createSession, deleteOwnAccount, hasAccount, checkPasswordForGuest, getVerdictsForGuest, getRatingsForGuest, getDislikes, getCookEventsForGuest, getConnections, getSwipeDaysForGuest, swipeWindow } from "@/lib/db";
+import { ensureGuest, deleteOwnAccount, hasAccount, checkPasswordForGuest, getVerdictsForGuest, getRatingsForGuest, getDislikes, getCookEventsForGuest, getConnections, getSwipeDaysForGuest, swipeWindow } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -21,12 +21,13 @@ export async function POST(req: Request) {
     const b = (await req.json().catch(() => ({}))) as { guestId?: string; name?: string };
     const guestId = resolveGuestId(req, b.guestId);
     const name = (b.name ?? "").trim().slice(0, 80);
-    if (!guestId) return NextResponse.json({ error: "guestId fehlt" }, { status: 400 });
+    if (!guestId) return NextResponse.json({ error: b.guestId ? "Nicht angemeldet." : "guestId fehlt" }, { status: b.guestId ? 401 : 400 });
     const guest = ensureGuest(guestId, name || "Gast", new Date().toISOString());
     const win = swipeWindow();
     // Sanfte Migration: Gerät ohne Sitzung (nur guestId) bekommt jetzt ein Token.
     const hadSession = !!sessionGuest(req);
-    const fresh = hadSession ? null : createSession(guestId).token;
+    // Nie für Konten und nie für Gäste, die schon eine Sitzung haben (sonst Übernahme per guestId).
+    const fresh = hadSession || !migrationAllowed(guestId) ? null : createMigrationSession(guestId);
     const res = NextResponse.json({
       verdicts: getVerdictsForGuest(guestId),
       ratings: getRatingsForGuest(guestId),
@@ -36,7 +37,6 @@ export async function POST(req: Request) {
       friendCode: guest.friend_code,
       swipeDays: { from: win.from, to: win.to, ...getSwipeDaysForGuest(guestId, win.from, win.to) },
       hasAccount: hasAccount(guestId),
-      ...(fresh ? { token: fresh } : {}),
     });
     return fresh ? attachSession(res, fresh) : res;
   } catch (err) {
@@ -46,7 +46,7 @@ export async function POST(req: Request) {
 
 /**
  * DELETE /api/me — Konto bzw. Gast selbst löschen (App Store 5.1.1(v)).
- * Body: { guestId?, password?, confirm: true }
+ * Nur mit gültigem Token (Cookie/Bearer). Body: { password?, confirm: true }
  * Hängt ein Account an der Identität, ist das Passwort Pflicht (Bremse wie beim Login).
  * Löscht Bewertungen, Tageseinträge, Sterne, Vorlieben, Koch-Einträge, Verbindungen,
  * Gruppen-Mitgliedschaften, Account und Sitzungen. Eingereichte Rezepte bleiben ohne Personenbezug.
@@ -55,7 +55,8 @@ export async function DELETE(req: Request) {
   try {
     const b = (await req.json().catch(() => ({}))) as { guestId?: string; password?: string; confirm?: boolean };
     if (b.confirm !== true) return NextResponse.json({ error: "Bitte das Löschen bestätigen." }, { status: 400 });
-    const guestId = resolveGuestId(req, b.guestId);
+    // Löschen nur mit gültigem Token, nie über die guestId im Body.
+    const guestId = sessionGuest(req);
     if (!guestId) return NextResponse.json({ error: "Nicht angemeldet." }, { status: 401 });
     if (hasAccount(guestId)) {
       const stop = blocked(req, LIMITS.login);

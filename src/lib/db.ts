@@ -162,7 +162,8 @@ function getDb(): Database.Database {
       guest_id    TEXT NOT NULL,
       created_at  TEXT NOT NULL,
       last_used   TEXT NOT NULL,
-      expires_at  TEXT NOT NULL
+      expires_at  TEXT NOT NULL,
+      via         TEXT NOT NULL DEFAULT 'login'
     );
     CREATE INDEX IF NOT EXISTS idx_sessions_guest ON sessions(guest_id);
   `);
@@ -187,6 +188,12 @@ function migrate(db: Database.Database) {
       for (const r of rows) ins.run(r.guest_id, r.slug, dayKey(r.updated_at), r.verdict, r.recipe_name, r.category, r.updated_at);
       db.pragma("user_version = 1");
     })();
+  }
+  if (version < 2) {
+    // Herkunft einer Sitzung: 'login' (Login/Register) oder 'migration' (stille Umstellung alter Geräte)
+    const cols = db.prepare(`PRAGMA table_info(sessions)`).all() as { name: string }[];
+    if (!cols.some((c) => c.name === "via")) db.exec(`ALTER TABLE sessions ADD COLUMN via TEXT NOT NULL DEFAULT 'login'`);
+    db.pragma("user_version = 2");
   }
 }
 
@@ -430,6 +437,47 @@ export function getMatches(guestId: string): MatchGroup[] {
     });
   }
   return groups;
+}
+
+/** Ein Eintrag im Freunde-Feed: ein Gericht, das ein:e verbundene:r Freund:in mag. */
+export interface FriendFeedItem {
+  slug: string;
+  recipeName: string;
+  category: string;
+  verdict: "like" | "super";
+  at: string;
+  /** Kein guestId: der ist das Geheimnis des Freundes. Der Code reicht zum Filtern. */
+  friend: { name: string; friendCode: string };
+}
+
+/**
+ * Freunde-Feed: die zuletzt gemochten Gerichte (like/super) aller VERBUNDENEN Gäste,
+ * neueste zuerst. Quelle ist der Dauerstand `verdicts` (updated_at = letzter Like).
+ * Nur Gäste aus `getConnections`, nie andere.
+ */
+export function getFriendsFeed(guestId: string, limit = 50): FriendFeedItem[] {
+  const partners = getConnections(guestId);
+  if (partners.length === 0) return [];
+  const n = Math.max(1, Math.min(200, Math.floor(limit) || 50));
+  const ids = partners.map((p) => p.guest_id);
+  const placeholders = ids.map(() => "?").join(",");
+  const rows = getDb()
+    .prepare(
+      `SELECT guest_id, slug, recipe_name AS recipeName, category, verdict, updated_at AS at
+       FROM verdicts
+       WHERE verdict IN ('like','super') AND guest_id IN (${placeholders})
+       ORDER BY updated_at DESC, slug ASC
+       LIMIT ?`,
+    )
+    .all(...ids, n) as { guest_id: string; slug: string; recipeName: string; category: string; verdict: "like" | "super"; at: string }[];
+  const byId = new Map(partners.map((p) => [p.guest_id, p]));
+  return rows.map((r) => {
+    const p = byId.get(r.guest_id)!;
+    return {
+      slug: r.slug, recipeName: r.recipeName, category: r.category, verdict: r.verdict, at: r.at,
+      friend: { name: p.name, friendCode: p.friend_code },
+    };
+  });
 }
 
 /** Ein frisch entstandenes Match beim Swipen (für die „Es ist ein Match!"-Animation). */
@@ -1026,12 +1074,12 @@ const SESSION_DAYS = 365;
 const hashToken = (t: string) => createHash("sha256").update(t).digest("hex");
 
 /** Neue Sitzung für eine Identität; gibt das Klartext-Token zurück (nur hier, nie gespeichert). */
-export function createSession(guestId: string, now = new Date()): { token: string; expiresAt: string } {
+export function createSession(guestId: string, now = new Date(), via: "login" | "migration" = "login"): { token: string; expiresAt: string } {
   const token = randomBytes(32).toString("base64url");
   const expiresAt = new Date(now.getTime() + SESSION_DAYS * 86400_000).toISOString();
   const iso = now.toISOString();
-  getDb().prepare(`INSERT INTO sessions (token_hash, guest_id, created_at, last_used, expires_at) VALUES (?, ?, ?, ?, ?)`)
-    .run(hashToken(token), guestId, iso, iso, expiresAt);
+  getDb().prepare(`INSERT INTO sessions (token_hash, guest_id, created_at, last_used, expires_at, via) VALUES (?, ?, ?, ?, ?, ?)`)
+    .run(hashToken(token), guestId, iso, iso, expiresAt, via);
   return { token, expiresAt };
 }
 

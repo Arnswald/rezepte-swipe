@@ -82,7 +82,7 @@ Verträge stehen in `src/lib/submission.ts` (Kommentar oben). Reihenfolge:
 3. `src/app/admin/page.tsx`: Reiter „Einreichungen“ — Karte mit Bild, Titel, Prüf-Ampel (Fehler rot, Hinweise gelb, Dubletten mit Link), Knöpfe **Freigeben** / **Ablehnen** / **Bearbeiten**.
 4. `src/app/api/recipes/submit-link/route.ts` (Gast): Datensatz sofort anlegen (eingereicht, `pruefung.phase = "auslesen"`), n8n anstoßen. Bremse 10/Stunde/guestId.
 5. `src/app/page.tsx`: Einreich-Sheet → Link-Feld nutzt `submit-link`; Profil „Meine Einreichungen“ mit Status (wird ausgelesen · wartet auf Freigabe · abgelehnt). Stapel blendet `phase: auslesen` aus.
-6. **n8n WF10b** (`~/Projekte/06_Werkstatt/n8n-automationen/10. Rezept-Link … .json`):
+6. **n8n WF10b** (`~/Projekte_Intern/N8N_Automationen/10. Rezept-Link … .json`):
    - „Kochbuch lesen“ / „Schon im Kochbuch?“ ersetzen: die App antwortet 409 bei Dublette.
    - „Rezept Schreiben“ + „Bild herunterladen/speichern“ ersetzen durch einen HTTP-Request an `/api/admin/recipes/import` (Claude soll JSON-Felder liefern statt Markdown: name, description, category, Makros, totalTime, portions, difficulty, ingredients[], steps[], tips[]; Prompt sonst gleich).
    - TikTok-Zweig: Apify `clockworks~tiktok-scraper` (Caption, Cover; Video für AssemblyAI nur mit Download-Zusatz).
@@ -93,7 +93,7 @@ Verträge stehen in `src/lib/submission.ts` (Kommentar oben). Reihenfolge:
 
 ### Phase 3 · Backup und Obsidian-Kopie über den Mac-Runner (≈ 3 h)
 
-Der Mac-Runner (`~/Projekte/06_Werkstatt/fokus-dashboard/tools/auftrags-runner/`) kann beides, ohne dass die öffentliche App je in den Vault schreibt:
+Der Mac-Runner (`~/Projekte_Intern/Dashboard_Konsole/tools/auftrags-runner/`) kann beides, ohne dass die öffentliche App je in den Vault schreibt:
 
 - **Backup** (`backup.mjs` um `sichereRezepte()` ergänzen, gleiches Muster wie die Dashboard-DB): nachts `GET /api/admin/backup` (x-server-key) → gzip-Kopie per `db.backup()` → entpacken, `PRAGMA quick_check`, `recipes ≥ 187` → Drive `Backups/Rezepte/rezepte-<Wochentag>.db.gz` + eine pro Monat. Bilder inkrementell: `GET /api/admin/bilder?seit=…` (Liste mit sha1), nur neue Originale laden. Der Weg über die Portainer-API (Exec im Container) ginge auch, ist aber zerbrechlicher (Token, Access-Schlüssel, Shell im Image) — Export-Endpunkt ist einfacher und testbar.
 - **Obsidian-Export** (neu, z. B. `rezepte-export.mjs`): `GET /api/admin/recipes/export?seit=<Merker>` → für jedes neue/geänderte veröffentlichte Rezept `06 Research/Gerichte/<slug>.md` im Kochbuch-Template schreiben, fehlende Bilder nach `Bilder/`. Regeln: nur schreiben, wenn sich der Inhalt geändert hat (`obsidian_export_hash`); unveränderte Obsidian-Importe nie anfassen; vorhandenen Abschnitt „📝 Meine Notizen“ und alles darunter aus der bestehenden Datei übernehmen; **nie löschen**, abgelehnte/eingereichte nicht exportieren. Markdown-Bau als gemeinsame Funktion `src/lib/recipeMarkdown.ts` (Template aus `Kochbuch-Struktur.md`, Bau-Logik aus `api/recipes/submit` erweitert).

@@ -41,3 +41,8 @@ Dann in Xcode öffnen. Wer die Web-App ändert, muss die Hülle nicht neu bauen 
 - **Guideline 4.2** („nur eine Webseite“): Die Hülle lädt die Live-URL. Dagegen stehen drei native Funktionen. Ein Erfolg ist nicht garantiert. Plan B: Frontend bündeln (Plan Abschnitt 7, Schritt 3) oder weitere native Funktionen (lokale Erinnerung, Offline-Cache).
 - Fällt der Server aus, zeigt die App „Keine Verbindung“ (`app-shell/offline.html`).
 - Sitzungen: alte Geräte werden beim nächsten Öffnen automatisch umgestellt. Erst wenn alle umgestellt sind, kann man in Portainer `SESSION_ENFORCE=1` setzen (dann zählt die alte guestId allein nicht mehr).
+  - Token aus der stillen Umstellung stehen mit `via = 'migration'` in `sessions` (normale Anmeldungen: `via = 'login'`). Konten bekommen Tokens nur über Login/Register, und ein Gast mit Sitzung oder Konto wird bei Body-guestId abgewiesen (401).
+  - **Bereinigung vor `SESSION_ENFORCE=1` (nicht automatisch, von Hand ausführen, vorher Datenbank sichern):** Tokens, die vor diesem Fix über `/api/me` an Konten gingen, sind nicht von echten zu unterscheiden (Spalte `via` gab es noch nicht, sie steht dort auf `login`). Sicherster Weg: alle Sitzungen von Konten verwerfen, die Nutzer melden sich einmal neu an:
+    `DELETE FROM sessions WHERE guest_id IN (SELECT guest_id FROM accounts);`
+    Dazu die Migrations-Sitzungen von Konten (neue Zeilen vor dem Umschalten): `DELETE FROM sessions WHERE via = 'migration' AND guest_id IN (SELECT guest_id FROM accounts);`
+  - Ändernde API-Aufrufe prüft `src/proxy.ts` auf den Origin-Header (gleiche Herkunft, `capacitor://localhost`, `https://rezepte.christianarns.de`; weitere über `ALLOWED_ORIGINS`, Komma-getrennt). Ändert sich `server.url`, `src/lib/origin.ts` anpassen.

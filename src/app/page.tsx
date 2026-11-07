@@ -2082,6 +2082,223 @@ function DeleteAccount({ guestId, onDeleted }: { guestId: string; onDeleted: () 
   );
 }
 
+// ── Freunde: was die Verbundenen zuletzt gemocht haben (07.11.2026) ──────────
+
+interface FeedItem {
+  slug: string;
+  recipeName: string;
+  category: string;
+  verdict: "like" | "super";
+  at: string;
+  friend: { name: string; friendCode: string };
+}
+interface FeedFriend { name: string; friendCode: string }
+
+/** „gerade eben“, „vor 5 Min.“, „vor 2 Std.“, „gestern“, „vor 3 Tagen“, sonst „12.10.“ */
+function relTime(iso: string, now = Date.now()): string {
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return "";
+  const min = Math.max(0, Math.round((now - t) / 60000));
+  if (min < 1) return "gerade eben";
+  if (min < 60) return `vor ${min} Min.`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `vor ${h} Std.`;
+  const d = Math.floor(h / 24);
+  if (d < 2) return "gestern";
+  if (d < 7) return `vor ${d} Tagen`;
+  return new Date(t).toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", timeZone: "Europe/Berlin" });
+}
+
+/** Abschnitt im Feed nach Berliner Tag (Tag beginnt um 4 Uhr wie „Heute gemerkt“). */
+function feedSection(iso: string, today: string): string {
+  const day = dayKey(new Date(iso));
+  if (day === today) return "Heute";
+  if (day === shiftDay(today, -1)) return "Gestern";
+  if (day >= shiftDay(today, -6)) return "Diese Woche";
+  return "Früher";
+}
+
+// Waldgrün, Terrakotta, Senf, Pflaume: je Freund eine feste Farbe (Reihenfolge der Verbindungen)
+const FRIEND_COLORS = ["#3f6b43", "#c4623f", "#b8862b", "#7a5269", "#4f6f8f"];
+
+function FriendDot({ name, color, size = 20 }: { name: string; color: string; size?: number }) {
+  return (
+    <span
+      aria-hidden
+      className="shrink-0 rounded-full flex items-center justify-center text-white font-bold leading-none"
+      style={{ width: size, height: size, background: color, fontSize: Math.round(size * 0.5) }}
+    >
+      {(name.trim()[0] ?? "?").toUpperCase()}
+    </span>
+  );
+}
+
+function FriendsView({
+  guestId, recipes, onOpen, onGoProfile,
+}: {
+  guestId: string;
+  recipes: Recipe[];
+  onOpen: (r: Recipe) => void;
+  onGoProfile: () => void;
+}) {
+  const [friends, setFriends] = useState<FeedFriend[]>([]);
+  const [items, setItems] = useState<FeedItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
+  const [who, setWho] = useState<string | null>(null); // friendCode oder null = alle
+
+  const bySlug = useMemo(() => {
+    const m = new Map<string, Recipe>();
+    for (const r of recipes) m.set(r.slug, r);
+    return m;
+  }, [recipes]);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch("/api/friends/feed", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ guestId, limit: 50 }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setFriends(d.friends ?? []);
+        setItems(d.items ?? []);
+        setFailed(false);
+      } else setFailed(true);
+    } catch { setFailed(true); } finally {
+      setLoading(false);
+    }
+  }, [guestId]);
+
+  // Laden beim Öffnen (setState erst nach dem fetch)
+  // eslint-disable-next-line react-hooks/set-state-in-effect
+  useEffect(() => { load(); }, [load]);
+
+  const colorOf = useMemo(() => {
+    const m = new Map<string, string>();
+    friends.forEach((f, i) => m.set(f.friendCode, FRIEND_COLORS[i % FRIEND_COLORS.length]));
+    return (code: string) => m.get(code) ?? FRIEND_COLORS[0];
+  }, [friends]);
+
+  // Nur Rezepte, die es in der App (noch) gibt; Filter je Freund; Abschnitte nach Tag
+  const sections = useMemo(() => {
+    const today = dayKey(new Date());
+    const out: { title: string; list: { it: FeedItem; r: Recipe }[] }[] = [];
+    for (const it of items) {
+      if (who && it.friend.friendCode !== who) continue;
+      const r = bySlug.get(it.slug);
+      if (!r) continue;
+      const title = feedSection(it.at, today);
+      const last = out[out.length - 1];
+      if (last && last.title === title) last.list.push({ it, r });
+      else out.push({ title, list: [{ it, r }] });
+    }
+    return out;
+  }, [items, who, bySlug]);
+
+  if (loading) {
+    return <div className="flex justify-center py-16"><Loader2 className="w-5 h-5 text-text-muted animate-spin" /></div>;
+  }
+
+  if (friends.length === 0) {
+    return (
+      // Ecke außen 28 = Knopf 12 + Polster 16
+      <div className="rounded-[28px] border border-border bg-surface p-4 pt-6 text-center space-y-3 mt-2">
+        <div className="mx-auto w-14 h-14 rounded-full bg-accent/10 flex items-center justify-center">
+          <Users className="w-7 h-7 text-accent" />
+        </div>
+        <div>
+          <h2 className="text-[17px] font-bold text-text-primary">Noch keine Freunde verbunden</h2>
+          <p className="text-[15px] text-text-secondary leading-relaxed mt-1">
+            {failed ? "Gerade keine Verbindung. Versuch es gleich nochmal." : "Verbinde dich per Freundescode. Dann siehst du hier, was deine Freunde zuletzt gemocht haben."}
+          </p>
+        </div>
+        <button onClick={onGoProfile}
+          className="w-full min-h-11 rounded-xl bg-accent text-white text-[15px] font-semibold active:scale-[0.98] transition-transform flex items-center justify-center gap-2">
+          <UserPlus className="w-4 h-4" /> Im Profil verbinden
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="pb-4">
+      {/* Filter je Freund: Pillen in einer Glas-Reihe wie die Kategorien (außen = halbe Höhe + 4) */}
+      {friends.length > 1 && (
+        <div className="flex gap-1 p-1 mb-4 rounded-full bg-surface/70 border border-border overflow-x-auto scrollbar-none">
+          {[{ name: "Alle", friendCode: "" }, ...friends].map((f) => {
+            const active = (who ?? "") === f.friendCode;
+            return (
+              <button
+                key={f.friendCode || "alle"}
+                onClick={() => setWho(f.friendCode && !active ? f.friendCode : null)}
+                aria-pressed={active}
+                className={`relative shrink-0 min-h-10 px-3.5 rounded-full text-[13px] font-semibold whitespace-nowrap flex items-center gap-1.5 transition-colors active:scale-95 ${active ? "text-white" : "text-text-secondary"}`}
+              >
+                {active && (
+                  <motion.span layoutId="friend-pill" className="absolute inset-0 rounded-full bg-accent/85"
+                    transition={{ type: "spring", stiffness: 380, damping: 32 }} />
+                )}
+                {f.friendCode && <span className="relative"><FriendDot name={f.name} color={colorOf(f.friendCode)} size={18} /></span>}
+                <span className="relative">{f.name}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+
+      {sections.length === 0 ? (
+        <div className="rounded-2xl border border-border bg-surface p-5 text-center">
+          <p className="text-[15px] text-text-secondary leading-relaxed">
+            {who ? `${friends.find((f) => f.friendCode === who)?.name ?? "Dein Freund"} hat noch nichts gemocht.` : "Deine Freunde haben noch nichts gemocht. Sobald sie wischen, steht es hier."}
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-5">
+          {sections.map((s) => (
+            <section key={s.title}>
+              <h3 className="text-[15px] font-bold text-text-primary mb-2">
+                {s.title} <span className="text-[13px] font-normal text-text-muted tabular-nums">({s.list.length})</span>
+              </h3>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+                {s.list.map(({ it, r }) => {
+                  const color = colorOf(it.friend.friendCode);
+                  return (
+                    <button
+                      key={`${it.friend.friendCode}:${it.slug}`}
+                      onClick={() => onOpen(r)}
+                      aria-label={`${r.name}, ${it.verdict === "super" ? "Superlike" : "gemocht"} von ${it.friend.name}, ${relTime(it.at)}`}
+                      className={`relative rounded-2xl overflow-hidden aspect-[4/5] bg-surface-elevated text-left active:scale-[0.98] transition-transform ${it.verdict === "super" ? "ring-2 ring-[#d99a2b] ring-offset-2 ring-offset-bg" : ""}`}
+                    >
+                      <RecipeImage r={r} shape="card" sizes="(min-width: 640px) 33vw, 50vw" className="absolute inset-0 w-full h-full object-cover" />
+                      <div className="absolute inset-x-0 bottom-0 h-3/5 bg-gradient-to-t from-black/85 to-transparent" />
+                      {/* Ecke 16 = Pille 10 (halbe Höhe) + Abstand 6 */}
+                      <span className="absolute top-1.5 left-1.5 h-5 pl-0.5 pr-2 rounded-full bg-white/90 text-[11px] font-semibold text-text-primary flex items-center gap-1 max-w-[calc(100%-3.5rem)]">
+                        <FriendDot name={it.friend.name} color={color} size={16} />
+                        <span className="truncate">{it.friend.name}</span>
+                      </span>
+                      {it.verdict === "super" && (
+                        <span className="absolute top-1.5 right-1.5 h-5 px-1.5 rounded-full bg-[#d99a2b] text-white text-[11px] font-bold flex items-center gap-0.5">
+                          <Star className="w-3 h-3 fill-white" /> Super
+                        </span>
+                      )}
+                      <div className="absolute inset-x-0 bottom-0 p-2">
+                        <p className="text-white text-[13px] font-semibold leading-tight line-clamp-2">{r.name}</p>
+                        <p className="text-white/80 text-[11px] mt-0.5 tabular-nums">{relTime(it.at)}</p>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AccountView({
   guestId, guestName, recipes, verdicts, ratings, dislikes, cookEvents, onOpen, onSuggest, onLogout, onSaveDislikes, onConnections,
   todayPicks, yesterdayPicks, yesterdayVisible, likeCounts, onGoSwipe, submitTick, onRemoveToday,
@@ -2562,7 +2779,7 @@ export default function RezeptePage() {
   const [diag, setDiag] = useState<Diagnostics | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [mode, setMode] = useState<"swipe" | "grid" | "account">("swipe");
+  const [mode, setMode] = useState<"swipe" | "grid" | "friends" | "account">("swipe");
   const [activeCat, setActiveCat] = useState("Alle");
   const [index, setIndex] = useState(0);
   const [detail, setDetail] = useState<Recipe | null>(null);
@@ -3120,8 +3337,8 @@ export default function RezeptePage() {
     <div className={scrollMode ? "pt-[calc(env(safe-area-inset-top)+1.1rem)] pb-3" : "shrink-0 pt-[calc(env(safe-area-inset-top)+1.1rem)]"}>
       {/* Großer Titel wie in Outfits; die Bereiche wechselt die Glas-Leiste unten */}
       <div className="flex items-end justify-between gap-3 pt-1 pb-1">
-        <h1 className={`text-[26px] font-extrabold tracking-tight leading-[1.1] text-text-primary ${mode === "account" ? "" : "pl-2.5"}`}>
-          {mode === "swipe" ? (eveningGroup ? "Heute Abend" : "Entdecken") : mode === "grid" ? "Alle Gerichte" : "Profil"}
+        <h1 className={`text-[26px] font-extrabold tracking-tight leading-[1.1] text-text-primary ${mode === "account" || mode === "friends" ? "" : "pl-2.5"}`}>
+          {mode === "swipe" ? (eveningGroup ? "Heute Abend" : "Entdecken") : mode === "grid" ? "Alle Gerichte" : mode === "friends" ? "Freunde" : "Profil"}
         </h1>
         {mode === "swipe" && !eveningGroup && (
           <button
@@ -3135,7 +3352,7 @@ export default function RezeptePage() {
       </div>
 
       {/* Kategorie-Filter — dezent, eine Reihe (nicht im Account, nicht im Abend-Modus) */}
-      {mode !== "account" && !eveningGroup && (categories.length > 0 || loading) && (
+      {(mode === "swipe" || mode === "grid") && !eveningGroup && (categories.length > 0 || loading) && (
         <div className="grid grid-cols-4 gap-1 shrink-0 mt-3 p-1 rounded-full bg-surface/70 border border-border">
           {/* Kein „Alle“ mehr (21.10.2026): aktive Gruppe nochmal antippen = Filter aus */}
           {CAT_GROUPS.map((cat) => {
@@ -3226,6 +3443,13 @@ export default function RezeptePage() {
               Prüfe, ob der Rezept-Ordner gemountet ist (Env <code className="bg-surface-elevated px-1 rounded">OBSIDIAN_RECIPES_PATH</code>).
             </p>
           </div>
+        ) : mode === "friends" ? (
+          <FriendsView
+            guestId={guestId}
+            recipes={recipes}
+            onOpen={setDetail}
+            onGoProfile={() => setMode("account")}
+          />
         ) : mode === "account" ? (
           <AccountView
             guestId={guestId}
@@ -3352,6 +3576,7 @@ export default function RezeptePage() {
           {([
             ["swipe", Sparkles, "Entdecken"],
             ["grid", BookOpen, "Gerichte"],
+            ["friends", Users, "Freunde"],
             ["account", User, "Profil"],
           ] as const).map(([m, Icon, label]) => {
             const active = mode === m;
