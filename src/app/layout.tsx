@@ -31,9 +31,13 @@ export const metadata: Metadata = {
   // Next schreibt nur „mobile-web-app-capable“; iOS liest den Apple-Namen
   other: { "apple-mobile-web-app-capable": "yes" },
   icons: {
-    icon: [{ url: "/icon.svg", type: "image/svg+xml" }],
-    // iOS-Stil wie die dunklen Standard-Apps (08.10.2026), neuer Name, damit iOS nicht das alte zwischenspeichert
-    apple: "/apple-touch-icon-v2.png",
+    // Icon v3 (Entwurf 3-01, 08.11.2026), gebaut mit tools/icon/bauen_v3.mjs.
+    // Neue Namen, damit iOS und Browser nicht das alte zwischenspeichern.
+    icon: [
+      { url: "/icon-v3.svg", type: "image/svg+xml" },
+      { url: "/favicon-32-v3.png", type: "image/png", sizes: "32x32" },
+    ],
+    apple: "/apple-touch-icon-v3.png",
   },
 };
 

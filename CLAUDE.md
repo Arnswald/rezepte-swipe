@@ -433,6 +433,7 @@ Schnelltest der API: `curl "http://localhost:3000/api/recipes?diag=1"`.
 ```
 
 - **App-Symbol (08.10.2026):** im Stil der dunklen iPhone-Standard-Apps (dunkler Verlauf, Gabel in Terrakotta, Wisch-Bogen zart): `public/apple-touch-icon-v2.png`, `icon-192-v2.png`, `icon-512-v2.png`; Quelle `tools/icon/gabel.svg` + `tools/icon/ios2.swift` (`swift ios2.swift gabel.svg out.png 0.74`). Neue Dateinamen, weil iOS Symbole festhält; alte Dateien bleiben.
+- **App-Symbol v3 (08.11.2026):** Entwurf 3-01 (Herzteller mit Besteck auf Terrakotta). `node tools/icon/bauen_v3.mjs` baut aus `tools/icon/3-01.svg` alle `*-v3`-Dateien in `public/` (icon-v3.svg abgerundet als Favicon, favicon-32, 192, 512, maskable-512 mit Motiv auf 80 %, apple-touch-icon 180) und `tools/icon/ios-symbol-1024-v3.png` für die iOS-Hülle. Falle: auch das Manifest bleibt im Cache und iOS übernimmt ein neues Home-Bildschirm-Symbol erst nach Entfernen und neu Hinzufügen; darum bei jedem Icon-Wechsel neue Dateinamen statt Überschreiben.
 - **Ausrollen ohne Klicken (08.10.2026):** `PORTAINER_WEBHOOK_URL` ist nicht gesetzt, CI baut nur das Image. Der Container lief deshalb vom 31.07. bis 08.10. unverändert. Ausrollen per Portainer-API wie das Dashboard-Autodeploy: Stack 10 (`rezepte-swipe`) mit `PUT /api/stacks/10?endpointId=1 {stackFileContent, env, pullImage: true}`, Zugang über portainer.christianarns.de (Cloudflare-Access-Dienstschlüssel + Portainer-Token in ~/.config/second-brain/).
 
 ## Feinschliff-Runde 21.10.2026 (Christian auf dem iPhone)
