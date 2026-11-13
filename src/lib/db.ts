@@ -514,8 +514,18 @@ export function getMatchPartnersForSlug(guestId: string, slug: string, myVerdict
 }
 
 /** Öffentliche Aggregat-Zähler pro Gericht (KEINE Namen): likes = like+super, supers = super. */
-export function getTrendingCounts(): Record<string, { likes: number; supers: number }> {
-  const rows = getDb()
+export interface TrendingCount {
+  likes: number;
+  supers: number;
+  /** Koch-Einträge („bereits gekocht“), alle Gäste zusammen */
+  cooked: number;
+  /** Summe aus (Sterne − 3) je Bewertung: 5 Sterne = +2, 3 = 0, 1 = −2 */
+  starPoints: number;
+}
+
+export function getTrendingCounts(): Record<string, TrendingCount> {
+  const db = getDb();
+  const rows = db
     .prepare(`
       SELECT slug,
              SUM(CASE WHEN verdict IN ('like','super') THEN 1 ELSE 0 END) AS likes,
@@ -524,8 +534,14 @@ export function getTrendingCounts(): Record<string, { likes: number; supers: num
       GROUP BY slug
     `)
     .all() as { slug: string; likes: number; supers: number }[];
-  const out: Record<string, { likes: number; supers: number }> = {};
-  for (const r of rows) out[r.slug] = { likes: r.likes, supers: r.supers };
+  const out: Record<string, TrendingCount> = {};
+  const at = (slug: string) => (out[slug] ??= { likes: 0, supers: 0, cooked: 0, starPoints: 0 });
+  for (const r of rows) { const c = at(r.slug); c.likes = r.likes; c.supers = r.supers; }
+  // Sortierung „Beliebt“ (13.11.2026): Sterne und Koch-Verlauf zählen mit. Nur Lesen, keine Namen.
+  const cooked = db.prepare(`SELECT slug, COUNT(*) AS n FROM cook_events GROUP BY slug`).all() as { slug: string; n: number }[];
+  for (const r of cooked) at(r.slug).cooked = r.n;
+  const stars = db.prepare(`SELECT slug, SUM(stars - 3) AS pts FROM ratings GROUP BY slug`).all() as { slug: string; pts: number }[];
+  for (const r of stars) at(r.slug).starPoints = r.pts;
   return out;
 }
 

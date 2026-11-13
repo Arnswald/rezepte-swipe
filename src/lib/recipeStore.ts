@@ -352,6 +352,10 @@ export function rowToRecipe(row: RecipeRow, images: ImageRow[]): StoredRecipe {
     images: karte ? [karte.datei, ...sorted.filter((i) => i !== karte).map((i) => i.datei)] : sorted.map((i) => i.datei),
     imageFocus: karte ? focusFromText(row.bildfokus) : null,
     created: row.erstellt,
+    // Sortierung „Neu“: aus dem Vault übernommene Rezepte tragen ihr Frontmatter-Datum (ihr
+    // freigegeben_am ist der Tag der Übernahme, bei allen gleich); alles andere den Zeitpunkt
+    // der Freigabe, denn `erstellt` ist bei Einreichungen der Tag des Einreichens.
+    added: (row.herkunft === "obsidian" ? row.erstellt : row.freigegeben_am) || row.erstellt || row.erstellt_am,
     source: row.quelle_url,
     totalTime: row.gesamtzeit,
     portions: row.portionen,

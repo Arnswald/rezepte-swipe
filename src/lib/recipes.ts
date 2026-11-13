@@ -64,6 +64,9 @@ export interface Recipe {
   /** Von Hand gesetzter Bildfokus des Kartenbilds in Prozent [x, y] (Frontmatter `bildfokus`), sonst null */
   imageFocus: [number, number] | null;
   created: string;
+  /** Seit wann in der App sichtbar (Sortierung „Neu“, Marke „Neu“): Freigabe-Zeitpunkt (ISO),
+   *  bei Rezepten aus dem Vault das Frontmatter-Datum. Fehlt in der Quelle `obsidian`. */
+  added?: string;
   source: string | null;
   /** Aus der Überblick-Tabelle */
   totalTime: string | null;
@@ -481,7 +484,7 @@ export function publicRecipe(r: StoredRecipe): Recipe {
     slug: r.slug, name: r.name, description: r.description, category: r.category,
     kcal: r.kcal, protein: r.protein, carbs: r.carbs, fat: r.fat,
     image: r.image, imageIsAi: r.imageIsAi, imageExists: r.imageExists, images: r.images,
-    imageFocus: r.imageFocus, created: r.created, source: r.source,
+    imageFocus: r.imageFocus, created: r.created, added: r.added, source: r.source,
     totalTime: r.totalTime, portions: r.portions, difficulty: r.difficulty,
     ingredients: r.ingredients, steps: r.steps, tips: r.tips, tags: r.tags,
   };

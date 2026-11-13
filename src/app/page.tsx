@@ -49,6 +49,8 @@ interface Recipe {
   /** Von Hand gesetzter Bildfokus des Kartenbilds [x, y] in % (Frontmatter `bildfokus`) */
   imageFocus?: [number, number] | null;
   created: string;
+  /** Seit wann in der App sichtbar (Freigabe, ISO oder YYYY-MM-DD); fehlt bei Quelle `obsidian` */
+  added?: string;
   source: string | null;
   totalTime: string | null;
   portions: string | null;
@@ -281,10 +283,29 @@ function catLabel(cat: string): string {
 }
 
 // Aggregierte Beliebtheits-Zähler (aus /api/recipes/trending) — likes = like+super.
-type TrendCount = { likes: number; supers: number };
+type TrendCount = { likes: number; supers: number; cooked?: number; starPoints?: number };
 type TrendCounts = Record<string, TrendCount>;
+// Beliebtheit: Like 1, Superlike 2 (einmal in likes + Bonus), je Koch-Eintrag 2,
+// je Sterne-Bewertung (Sterne − 3), also 5 Sterne +2 und 1 Stern −2.
 function trendScore(c?: TrendCount): number {
-  return c ? c.likes + c.supers : 0; // super zählt doppelt (einmal in likes + Bonus)
+  return c ? c.likes + c.supers + 2 * (c.cooked ?? 0) + (c.starPoints ?? 0) : 0;
+}
+
+// Sortierung im Reiter „Gerichte“ (13.11.2026), Wahl bleibt lokal gemerkt.
+type GridSort = "neu" | "beliebt" | "az";
+const SORT_KEY = "rezepte-sort-v1";
+const GRID_SORTS: { id: GridSort; label: string }[] = [
+  { id: "neu", label: "Neu" },
+  { id: "beliebt", label: "Beliebt" },
+  { id: "az", label: "A bis Z" },
+];
+function loadGridSort(): GridSort {
+  if (typeof window === "undefined") return "neu";
+  try { const v = localStorage.getItem(SORT_KEY); return v === "beliebt" || v === "az" ? v : "neu"; } catch { return "neu"; }
+}
+/** Seit wann das Rezept in der App ist (ISO oder YYYY-MM-DD, beides sortiert als Text richtig). */
+function addedOf(r: Recipe): string {
+  return r.added || r.created || "";
 }
 
 // Gewünschte Filter-Reihenfolge (alles andere hinten dran, alphabetisch)
@@ -726,7 +747,7 @@ function DayDone({
 // Weich scrollen (22.10.2026): keine framer-`layout`-Messung je Kachel (200 Kacheln wurden bei
 // jedem Rendern neu vermessen), kein backdrop-blur, Kacheln außerhalb des Bildschirms per
 // content-visibility übersprungen, und memo, damit Seiten-State das Raster nicht neu rendert.
-const RecipeGrid = memo(function RecipeGrid({ recipes, onOpen, verdicts, counts }: { recipes: Recipe[]; onOpen: (r: Recipe) => void; verdicts?: Record<string, Verdict>; counts?: TrendCounts }) {
+const RecipeGrid = memo(function RecipeGrid({ recipes, onOpen, verdicts, counts, newSince }: { recipes: Recipe[]; onOpen: (r: Recipe) => void; verdicts?: Record<string, Verdict>; counts?: TrendCounts; /** YYYY-MM-DD: ab diesem Tag hinzugekommene Rezepte tragen „Neu“ */ newSince?: string }) {
   const isHero = (i: number) => i % 7 === 0;
 
   return (
@@ -734,6 +755,7 @@ const RecipeGrid = memo(function RecipeGrid({ recipes, onOpen, verdicts, counts 
       {recipes.map((r, i) => {
         const hero = isHero(i);
         const c = counts?.[r.slug];
+        const isNew = !!newSince && addedOf(r).slice(0, 10) >= newSince;
         return (
           <button
             key={r.slug}
@@ -746,12 +768,17 @@ const RecipeGrid = memo(function RecipeGrid({ recipes, onOpen, verdicts, counts 
             <RecipeImage r={r} shape="tile" sizes={hero ? "(min-width: 1024px) 50vw, 100vw" : "(min-width: 1024px) 25vw, 50vw"} eager={i < 6} className="absolute inset-0 w-full h-full object-cover" />
             <div className="absolute inset-x-0 bottom-0 h-3/5 bg-gradient-to-t from-black/90 via-black/40 to-transparent" />
             {/* Trending-Badge: wie oft geliked/super-geliked (öffentlich, keine Namen) */}
-            {c && c.likes > 0 && (
-              <span className="absolute top-2 left-2 flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/60 text-white text-[10px] font-semibold tabular-nums">
-                <Heart className="w-2.5 h-2.5 fill-white" /> {c.likes}
-                {c.supers > 0 && <><Star className="w-2.5 h-2.5 fill-[#ffcf5c] text-[#ffcf5c] ml-0.5" /> {c.supers}</>}
-              </span>
-            )}
+            <span className="absolute top-2 left-2 flex items-center gap-1">
+              {isNew && (
+                <span className="px-2 py-0.5 rounded-full bg-accent text-white text-[10px] font-bold">Neu</span>
+              )}
+              {c && c.likes > 0 && (
+                <span className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/60 text-white text-[10px] font-semibold tabular-nums">
+                  <Heart className="w-2.5 h-2.5 fill-white" /> {c.likes}
+                  {c.supers > 0 && <><Star className="w-2.5 h-2.5 fill-[#ffcf5c] text-[#ffcf5c] ml-0.5" /> {c.supers}</>}
+                </span>
+              )}
+            </span>
             {verdicts?.[r.slug] === "super" && (
               <span className="absolute top-2 right-2 w-6 h-6 rounded-full bg-[#d99a2b] flex items-center justify-center shadow"><Star className="w-3.5 h-3.5 fill-white text-white" /></span>
             )}
@@ -3305,6 +3332,11 @@ export default function RezeptePage() {
   const [hydrated, setHydrated] = useState(false);
   const [counts, setCounts] = useState<TrendCounts>({});
   const [search, setSearch] = useState("");
+  const [gridSort, setGridSort] = useState<GridSort>("neu");
+  const chooseGridSort = useCallback((s: GridSort) => {
+    setGridSort(s);
+    try { localStorage.setItem(SORT_KEY, s); } catch { /* ignore */ }
+  }, []);
   const [match, setMatch] = useState<{ recipe: Recipe; partners: MatchPing[] } | null>(null);
   const [eveningGroup, setEveningGroup] = useState<{ id: string; name: string } | null>(null);
   const [fullRecipes, setFullRecipes] = useState<Record<string, Recipe>>({});
@@ -3335,6 +3367,7 @@ export default function RezeptePage() {
     setVerdicts(loadVerdicts());
     setRatings(loadRatings());
     setDislikes(loadDislikes());
+    setGridSort(loadGridSort());
     const ds = loadDayStore();
     dayStoreRef.current = ds;
     setDayStore(ds);
@@ -3753,13 +3786,23 @@ export default function RezeptePage() {
           r.category.toLowerCase().includes(q),
       );
     }
+    // Neu: rein nach Datum (sonst rutschte ein neues Rezept mit ungeliebter Zutat ans Ende und
+    // man sähe nicht, dass es dazugekommen ist). A bis Z: rein nach Name.
+    if (gridSort === "neu") {
+      return [...list].sort((a, b) => addedOf(b).localeCompare(addedOf(a)) || a.name.localeCompare(b.name, "de"));
+    }
+    if (gridSort === "az") {
+      return [...list].sort((a, b) => a.name.localeCompare(b.name, "de", { sensitivity: "base" }));
+    }
     return [...list].sort((a, b) => {
       const da = dislikeHits(a, dislikes).length ? 1 : 0;
       const db = dislikeHits(b, dislikes).length ? 1 : 0;
       if (da !== db) return da - db;
-      return trendScore(counts[b.slug]) - trendScore(counts[a.slug]) || b.created.localeCompare(a.created);
+      return trendScore(counts[b.slug]) - trendScore(counts[a.slug]) || addedOf(b).localeCompare(addedOf(a));
     });
-  }, [filtered, search, counts, dislikes]);
+  }, [filtered, search, counts, dislikes, gridSort]);
+  // Marke „Neu“: in den letzten 7 Tagen dazugekommen
+  const newSince = useMemo(() => (dayInfo.today ? shiftDay(dayInfo.today, -7) : ""), [dayInfo.today]);
 
   // „Für dich": beste noch nicht geswipte Gerichte nach Geschmacksprofil.
   // Kaltstart (kein Profil) → leer, damit keine sinnlose Reihe erscheint.
@@ -3942,6 +3985,35 @@ export default function RezeptePage() {
           )}
         </div>
       )}
+
+      {/* Sortierung (13.11.2026): eine Zeile, drei gleich breite Segmente, Wahl bleibt gemerkt */}
+      {mode === "grid" && recipes.length > 0 && (
+        <div role="radiogroup" aria-label="Sortierung" className="grid grid-cols-3 gap-1 mt-2.5 p-1 rounded-full bg-surface/70 border border-border">
+          {GRID_SORTS.map((s) => {
+            const active = gridSort === s.id;
+            return (
+              <button
+                key={s.id}
+                role="radio"
+                aria-checked={active}
+                onClick={() => chooseGridSort(s.id)}
+                className={`relative min-h-11 px-1 rounded-full text-[13px] font-semibold whitespace-nowrap transition-colors active:scale-95 ${
+                  active ? "text-text-primary" : "text-text-secondary"
+                }`}
+              >
+                {active && (
+                  <motion.span
+                    layoutId="sort-pill"
+                    className="absolute inset-0 rounded-full bg-surface-elevated border border-border"
+                    transition={{ type: "spring", stiffness: 380, damping: 32 }}
+                  />
+                )}
+                <span className="relative z-10">{s.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 
@@ -4105,7 +4177,7 @@ export default function RezeptePage() {
                 </div>
               </div>
             )}
-            <RecipeGrid recipes={gridRecipes} onOpen={setDetail} verdicts={verdicts} counts={counts} />
+            <RecipeGrid recipes={gridRecipes} onOpen={setDetail} verdicts={verdicts} counts={counts} newSince={newSince} />
             <div className="h-24 shrink-0" />
           </>
         ) : (
