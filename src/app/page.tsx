@@ -292,16 +292,17 @@ function trendScore(c?: TrendCount): number {
 }
 
 // Sortierung im Reiter „Gerichte“ (13.11.2026), Wahl bleibt lokal gemerkt.
-type GridSort = "neu" | "beliebt" | "az";
+// Seit 13.11.2026 (zweite Runde) nur noch Neu und Beliebt; an der dritten Stelle sitzt die Suche.
+type GridSort = "neu" | "beliebt";
 const SORT_KEY = "rezepte-sort-v1";
 const GRID_SORTS: { id: GridSort; label: string }[] = [
   { id: "neu", label: "Neu" },
   { id: "beliebt", label: "Beliebt" },
-  { id: "az", label: "A bis Z" },
 ];
 function loadGridSort(): GridSort {
   if (typeof window === "undefined") return "neu";
-  try { const v = localStorage.getItem(SORT_KEY); return v === "beliebt" || v === "az" ? v : "neu"; } catch { return "neu"; }
+  // Ein gemerktes „az“ aus der ersten Runde fällt auf den Standard zurück.
+  try { return localStorage.getItem(SORT_KEY) === "beliebt" ? "beliebt" : "neu"; } catch { return "neu"; }
 }
 /** Seit wann das Rezept in der App ist (ISO oder YYYY-MM-DD, beides sortiert als Text richtig). */
 function addedOf(r: Recipe): string {
@@ -3332,6 +3333,10 @@ export default function RezeptePage() {
   const [hydrated, setHydrated] = useState(false);
   const [counts, setCounts] = useState<TrendCounts>({});
   const [search, setSearch] = useState("");
+  // Suche sitzt als drittes Segment in der Sortier-Zeile: offen, solange sie den Fokus hat oder Text drinsteht
+  const [searchFocus, setSearchFocus] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const searchOpen = searchFocus || search !== "";
   const [gridSort, setGridSort] = useState<GridSort>("neu");
   const chooseGridSort = useCallback((s: GridSort) => {
     setGridSort(s);
@@ -3787,12 +3792,9 @@ export default function RezeptePage() {
       );
     }
     // Neu: rein nach Datum (sonst rutschte ein neues Rezept mit ungeliebter Zutat ans Ende und
-    // man sähe nicht, dass es dazugekommen ist). A bis Z: rein nach Name.
+    // man sähe nicht, dass es dazugekommen ist).
     if (gridSort === "neu") {
       return [...list].sort((a, b) => addedOf(b).localeCompare(addedOf(a)) || a.name.localeCompare(b.name, "de"));
-    }
-    if (gridSort === "az") {
-      return [...list].sort((a, b) => a.name.localeCompare(b.name, "de", { sensitivity: "base" }));
     }
     return [...list].sort((a, b) => {
       const da = dislikeHits(a, dislikes).length ? 1 : 0;
@@ -3967,51 +3969,76 @@ export default function RezeptePage() {
         </div>
       )}
 
-      {/* Suche oben (22.10.2026, vorher schwebend unten über dem Raster: störte beim Scrollen) */}
+      {/* Sortierung + Suche in einer Zeile (13.11.2026): Neu · Beliebt · Suche, drei gleich breite Segmente.
+          Das dritte Segment IST das Suchfeld (kein Knopf, der erst ein Feld einblendet: so kommt auf iOS
+          die Tastatur sicher). Mit Fokus oder Text wird es breit, Neu und Beliebt rücken schmal nach links
+          und bleiben bedienbar. */}
       {mode === "grid" && recipes.length > 0 && (
-        <div className="mt-2.5 flex items-center gap-2 h-11 px-4 rounded-full bg-surface/70 border border-border">
-          <Search className="w-4 h-4 text-text-muted shrink-0" />
-          <input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Rezept suchen…"
-            enterKeyHint="search"
-            className="flex-1 min-w-0 bg-transparent text-base text-text-primary placeholder:text-text-muted focus:outline-none"
-          />
-          {search && (
-            <button onClick={() => setSearch("")} aria-label="Suche leeren" className="shrink-0 -mr-2 w-9 h-9 flex items-center justify-center text-text-muted active:scale-90 transition-transform">
-              <X className="w-4 h-4" />
-            </button>
-          )}
-        </div>
-      )}
-
-      {/* Sortierung (13.11.2026): eine Zeile, drei gleich breite Segmente, Wahl bleibt gemerkt */}
-      {mode === "grid" && recipes.length > 0 && (
-        <div role="radiogroup" aria-label="Sortierung" className="grid grid-cols-3 gap-1 mt-2.5 p-1 rounded-full bg-surface/70 border border-border">
-          {GRID_SORTS.map((s) => {
-            const active = gridSort === s.id;
-            return (
+        <div className="flex gap-1 mt-2.5 p-1 rounded-full bg-surface/70 border border-border">
+          <div role="radiogroup" aria-label="Sortierung" className="contents">
+            {GRID_SORTS.map((s) => {
+              const active = gridSort === s.id;
+              return (
+                <button
+                  key={s.id}
+                  role="radio"
+                  aria-checked={active}
+                  onClick={() => chooseGridSort(s.id)}
+                  className={`relative min-h-11 rounded-full text-[13px] font-semibold whitespace-nowrap transition-colors active:scale-95 ${
+                    searchOpen ? "flex-none px-3.5" : "flex-1 basis-0 px-1"
+                  } ${active ? "text-text-primary" : "text-text-secondary"}`}
+                >
+                  {active && (
+                    <motion.span
+                      layoutId="sort-pill"
+                      className="absolute inset-0 rounded-full bg-surface-elevated border border-border"
+                      transition={{ type: "spring", stiffness: 380, damping: 32 }}
+                    />
+                  )}
+                  <span className="relative z-10">{s.label}</span>
+                </button>
+              );
+            })}
+          </div>
+          <label
+            className={`flex-[1_1_0%] min-w-0 min-h-11 flex items-center gap-1.5 rounded-full cursor-text transition-colors ${
+              searchOpen ? "pl-3.5 bg-surface-elevated border border-accent/45" : "justify-center px-1 border border-transparent"
+            }`}
+          >
+            <Search className={`w-4 h-4 shrink-0 ${searchOpen ? "text-text-muted" : "text-text-secondary"}`} />
+            <input
+              ref={searchRef}
+              type="text"
+              inputMode="search"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              onFocus={() => setSearchFocus(true)}
+              onBlur={() => setSearchFocus(false)}
+              onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+              placeholder={searchOpen ? "Rezept suchen…" : "Suche"}
+              aria-label="Rezept suchen"
+              enterKeyHint="search"
+              autoComplete="off"
+              autoCorrect="off"
+              className={`min-w-0 bg-transparent text-base text-text-primary focus:outline-none ${
+                searchOpen
+                  ? "flex-1 placeholder:text-text-muted"
+                  : "flex-none w-[2.9rem] placeholder:text-[13px] placeholder:font-semibold placeholder:text-text-secondary"
+              }`}
+            />
+            {searchOpen && (
               <button
-                key={s.id}
-                role="radio"
-                aria-checked={active}
-                onClick={() => chooseGridSort(s.id)}
-                className={`relative min-h-11 px-1 rounded-full text-[13px] font-semibold whitespace-nowrap transition-colors active:scale-95 ${
-                  active ? "text-text-primary" : "text-text-secondary"
-                }`}
+                type="button"
+                // Fokus nicht vor dem Klick verlieren, sonst klappt die Zeile unter dem Finger zusammen
+                onPointerDown={(e) => e.preventDefault()}
+                onClick={() => { setSearch(""); searchRef.current?.blur(); }}
+                aria-label="Suche schließen"
+                className="shrink-0 w-11 h-11 -my-px flex items-center justify-center text-text-muted active:scale-90 transition-transform"
               >
-                {active && (
-                  <motion.span
-                    layoutId="sort-pill"
-                    className="absolute inset-0 rounded-full bg-surface-elevated border border-border"
-                    transition={{ type: "spring", stiffness: 380, damping: 32 }}
-                  />
-                )}
-                <span className="relative z-10">{s.label}</span>
+                <X className="w-4 h-4" />
               </button>
-            );
-          })}
+            )}
+          </label>
         </div>
       )}
     </div>
